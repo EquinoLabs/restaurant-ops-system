@@ -8,7 +8,7 @@ interface AuthContextType {
   loading: boolean;
   selectedOutlet: OutletMembership | null;
   setSelectedOutletId: (outletId: string) => void;
-  login: (email: string, pass: string) => Promise<void>;
+  login: (email: string, pass: string) => Promise<UserMe>;
   logout: () => void;
 }
 
@@ -47,7 +47,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     loadUser();
   }, [token]);
 
-  const login = async (email: string, pass: string) => {
+  const login = async (email: string, pass: string): Promise<UserMe> => {
     setLoading(true);
     try {
       const res = await loginStaff(email, pass);
@@ -58,6 +58,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (userProfile.memberships.length > 0) {
         setSelectedOutletIdState(userProfile.memberships[0].outlet_id);
       }
+      return userProfile;
     } finally {
       setLoading(false);
     }

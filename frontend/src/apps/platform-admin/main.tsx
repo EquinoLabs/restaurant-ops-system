@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from '../../features/authentication/AuthContext';
-import { LoginForm } from '../../features/authentication/LoginForm';
+import { PlatformLoginForm } from '../../features/authentication/PlatformLoginForm';
 import { PlatformAdminView } from '../../features/platform-admin/PlatformAdminView';
 import { RequirePlatformAdmin } from '../../routes/RequirePlatformAdmin';
 import { NotFoundView } from '../../features/public-menu/NotFoundView';
@@ -13,8 +13,9 @@ export const PlatformAdminApp: React.FC = () => {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          <Route path="/login" element={<LoginForm />} />
+          <Route path="/login" element={<PlatformLoginForm />} />
           <Route path="/" element={<Navigate to="/platform" replace />} />
+
           <Route
             path="/platform"
             element={
