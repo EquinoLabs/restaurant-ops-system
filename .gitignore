@@ -63,4 +63,7 @@ Thumbs.db
 
 # --- Miscellaneous ---
 \#ME/
+\#private/
+\#private
 *.log
+
