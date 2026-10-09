@@ -66,8 +66,13 @@ def get_public_menu_by_slug(db: Session, public_slug: str) -> PublicOutletMenuRe
         currency=outlet.currency,
         timezone=outlet.timezone,
         address=outlet.address,
+        logo_url=outlet.logo_url,
+        cover_image_url=outlet.cover_image_url,
+        primary_color=outlet.primary_color,
+        accent_color=outlet.accent_color,
         categories=category_schemas
     )
+
 
 
 def generate_outlet_qr_code(db: Session, public_slug: str, base_url: str = "http://localhost:5173") -> bytes:

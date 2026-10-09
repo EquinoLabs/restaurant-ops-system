@@ -20,6 +20,13 @@ class Outlet(Base, TimestampMixin):
     address: Mapped[str] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
 
+    # Dynamic branding fields
+    logo_url: Mapped[str] = mapped_column(String(500), nullable=True)
+    cover_image_url: Mapped[str] = mapped_column(String(500), nullable=True)
+    primary_color: Mapped[str] = mapped_column(String(20), nullable=True)
+    accent_color: Mapped[str] = mapped_column(String(20), nullable=True)
+
     business = relationship("Business", back_populates="outlets")
     categories = relationship("MenuCategory", back_populates="outlet", cascade="all, delete-orphan")
     items = relationship("MenuItem", back_populates="outlet", cascade="all, delete-orphan")
+

@@ -7,6 +7,10 @@ export interface PlatformOutlet {
   timezone: string;
   address: string | null;
   status: string;
+  logo_url?: string | null;
+  cover_image_url?: string | null;
+  primary_color?: string | null;
+  accent_color?: string | null;
   created_at: string;
   updated_at: string;
 }

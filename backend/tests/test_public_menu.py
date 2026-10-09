@@ -54,3 +54,42 @@ def test_generate_qr_code_download(client):
     response = client.get("/api/v1/public/outlets/test-camp/qr?download=true")
     assert response.status_code == 200
     assert "attachment; filename=\"test-camp-qr-code.png\"" in response.headers["content-disposition"]
+
+
+def test_outlet_branding_update_and_public_menu(client, db_session):
+    from app.modules.outlets.models import Outlet
+    outlet = db_session.query(Outlet).filter(Outlet.public_slug == "test-camp").first()
+    assert outlet is not None
+
+    # Login owner user
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Update branding
+    patch_resp = client.patch(
+        f"/api/v1/outlets/{outlet.id}/branding",
+        headers=headers,
+        json={
+            "primary_color": "#4f46e5",
+            "accent_color": "#f59e0b",
+            "logo_url": "outlets/logos/custom-logo.png"
+        }
+    )
+    assert patch_resp.status_code == 200
+    b_data = patch_resp.json()
+    assert b_data["primary_color"] == "#4f46e5"
+    assert b_data["accent_color"] == "#f59e0b"
+
+    # Verify public menu endpoint returns branding
+    menu_resp = client.get("/api/v1/public/outlets/test-camp/menu")
+    assert menu_resp.status_code == 200
+    menu_data = menu_resp.json()
+    assert menu_data["primary_color"] == "#4f46e5"
+    assert menu_data["accent_color"] == "#f59e0b"
+    assert "custom-logo.png" in menu_data["logo_url"]
+

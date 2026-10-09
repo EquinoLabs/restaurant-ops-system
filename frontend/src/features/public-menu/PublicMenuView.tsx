@@ -85,19 +85,49 @@ export const PublicMenuView: React.FC = () => {
   const qrImageUrl = `${API_BASE_URL}/public/outlets/${publicSlug}/qr`;
   const qrDownloadUrl = `${API_BASE_URL}/public/outlets/${publicSlug}/qr?download=true`;
 
+  const primaryColor = menuData.primary_color || '#d97706'; // default amber-600
+
   return (
     <div className="max-w-md mx-auto min-h-screen bg-gray-50 pb-12 antialiased relative">
+      {/* Cover Image Banner (Optional Outlet Branding) */}
+      {menuData.cover_image_url && (
+        <div className="h-36 w-full relative bg-slate-900 overflow-hidden">
+          <img
+            src={menuData.cover_image_url}
+            alt={menuData.outlet_name}
+            className="w-full h-full object-cover opacity-90"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent"></div>
+        </div>
+      )}
+
       {/* Outlet Header */}
-      <header className="bg-white border-b border-gray-100 p-5 sticky top-0 z-20 shadow-xs">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2 text-amber-600 text-xs font-semibold uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Digital Menu</span>
+      <header className={`bg-white border-b border-gray-100 p-5 sticky top-0 z-20 shadow-xs ${
+        menuData.cover_image_url ? '-mt-6 rounded-t-2xl relative z-30 shadow-md' : ''
+      }`}>
+        <div className="flex items-start justify-between mb-2">
+          <div className="flex items-center gap-3">
+            {menuData.logo_url && (
+              <img
+                src={menuData.logo_url}
+                alt={`${menuData.outlet_name} Logo`}
+                className="w-12 h-12 rounded-xl object-cover border border-gray-200/80 shadow-xs"
+              />
+            )}
+            <div>
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider" style={{ color: primaryColor }}>
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>Digital Menu</span>
+              </div>
+              <h1 className="text-xl font-extrabold text-gray-900 tracking-tight leading-snug">
+                {menuData.outlet_name}
+              </h1>
+            </div>
           </div>
 
           <button
             onClick={() => setShowQrModal(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg border border-amber-200/80 transition-all"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg border border-amber-200/80 transition-all flex-shrink-0 mt-1"
             title="View permanent table QR code"
           >
             <QrCode className="w-3.5 h-3.5 text-amber-600" />
@@ -105,9 +135,6 @@ export const PublicMenuView: React.FC = () => {
           </button>
         </div>
 
-        <h1 className="text-xl font-extrabold text-gray-900 tracking-tight">
-          {menuData.outlet_name}
-        </h1>
         {menuData.address && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-1">
             <MapPin className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
@@ -131,19 +158,23 @@ export const PublicMenuView: React.FC = () => {
       {/* Category Pills Navigation (Sticky) */}
       {!searchQuery && menuData.categories.length > 0 && (
         <div className="sticky top-[141px] z-10 bg-white/95 backdrop-blur-md border-b border-gray-100 px-4 py-2.5 overflow-x-auto no-scrollbar flex gap-2">
-          {menuData.categories.map((cat) => (
-            <button
-              key={cat.id}
-              onClick={() => scrollToCategory(cat.id)}
-              className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
-                activeCategoryId === cat.id
-                  ? 'bg-amber-600 text-white shadow-sm'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200/70'
-              }`}
-            >
-              {cat.name}
-            </button>
-          ))}
+          {menuData.categories.map((cat) => {
+            const isActive = activeCategoryId === cat.id;
+            return (
+              <button
+                key={cat.id}
+                onClick={() => scrollToCategory(cat.id)}
+                style={isActive ? { backgroundColor: primaryColor, color: '#ffffff' } : {}}
+                className={`px-3.5 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all ${
+                  isActive
+                    ? 'shadow-sm'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200/70'
+                }`}
+              >
+                {cat.name}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -206,7 +237,8 @@ export const PublicMenuView: React.FC = () => {
             <a
               href={qrDownloadUrl}
               download
-              className="w-full inline-flex items-center justify-center gap-2 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl transition-all shadow-sm"
+              style={{ backgroundColor: primaryColor }}
+              className="w-full inline-flex items-center justify-center gap-2 py-2.5 text-white text-xs font-semibold rounded-xl transition-all shadow-sm hover:opacity-90"
             >
               <Download className="w-4 h-4" />
               Download Printable PNG

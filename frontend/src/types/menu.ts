@@ -23,6 +23,10 @@ export interface OutletPublicMenu {
   currency: string;
   timezone: string;
   address: string | null;
+  logo_url?: string | null;
+  cover_image_url?: string | null;
+  primary_color?: string | null;
+  accent_color?: string | null;
   categories: MenuCategory[];
 }
 

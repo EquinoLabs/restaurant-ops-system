@@ -42,9 +42,19 @@ class PublicOutletMenuResponse(BaseModel):
     currency: str
     timezone: str
     address: Optional[str] = None
+    logo_url: Optional[str] = None
+    cover_image_url: Optional[str] = None
+    primary_color: Optional[str] = None
+    accent_color: Optional[str] = None
     categories: List[PublicMenuCategorySchema] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("logo_url", "cover_image_url", mode="before")
+    @classmethod
+    def resolve_branding_image_url(cls, v: Optional[str]) -> Optional[str]:
+        return get_public_image_url(v)
+
 
 
 # --- Admin Schemas ---
