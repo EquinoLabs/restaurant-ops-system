@@ -1,6 +1,6 @@
 import uuid
 from typing import List, TYPE_CHECKING
-from sqlalchemy import String, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Boolean, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -17,12 +17,14 @@ class User(Base, TimestampMixin):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(String(150), nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="active", nullable=False)
+    is_platform_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false", nullable=False)
 
     memberships: Mapped[List["OutletMembership"]] = relationship(
         "OutletMembership",
         back_populates="user",
         cascade="all, delete-orphan"
     )
+
 
 
 class OutletMembership(Base, TimestampMixin):

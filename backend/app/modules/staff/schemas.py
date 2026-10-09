@@ -29,9 +29,11 @@ class UserMeOut(BaseModel):
     email: str
     display_name: str
     status: str
+    is_platform_admin: bool = False
     memberships: List[OutletMembershipOut]
 
     model_config = ConfigDict(from_attributes=True)
+
 
 
 class StaffCreateRequest(BaseModel):

@@ -38,6 +38,15 @@ def get_current_user(
     return user
 
 
+def get_current_platform_admin(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    if not current_user.is_platform_admin:
+        raise ForbiddenError("Platform administrator privileges are required")
+    return current_user
+
+
+
 class RequireOutletRole:
     def __init__(self, allowed_roles: Optional[List[str]] = None):
         self.allowed_roles = allowed_roles or ["owner", "manager"]
