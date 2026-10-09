@@ -8,6 +8,7 @@ import {
   CategoryPayload,
   ItemPayload,
 } from '../types/adminMenu';
+import { DiningTable, Order, OrderPayload, OrderStatus } from '../types/orders';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
@@ -203,6 +204,115 @@ export async function fetchAuditLogs(outletId: string, token: string): Promise<A
 
   if (!response.ok) {
     throw new Error(`Failed to load audit logs (${response.status})`);
+  }
+
+  return response.json();
+}
+
+// --- Tables & Staff Orders API ---
+
+export async function fetchOutletTables(outletId: string, token: string): Promise<DiningTable[]> {
+  const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/tables`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load dining tables (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function createTable(
+  outletId: string,
+  tableNumber: string,
+  capacity: number,
+  token: string
+): Promise<DiningTable> {
+  const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/tables`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ table_number: tableNumber, capacity }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to create table (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function fetchOutletOrders(
+  outletId: string,
+  token: string,
+  status?: string
+): Promise<Order[]> {
+  const url = status
+    ? `${API_BASE_URL}/outlets/${outletId}/orders?status=${encodeURIComponent(status)}`
+    : `${API_BASE_URL}/outlets/${outletId}/orders`;
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load orders (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function createOrder(
+  outletId: string,
+  payload: OrderPayload,
+  token: string
+): Promise<Order> {
+  const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/orders`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to create order (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function updateOrderStatus(
+  orderId: string,
+  status: OrderStatus,
+  token: string
+): Promise<Order> {
+  const response = await fetch(`${API_BASE_URL}/orders/${orderId}/status`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({ status }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to update order status (${response.status})`);
   }
 
   return response.json();

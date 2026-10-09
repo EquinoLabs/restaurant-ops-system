@@ -4,6 +4,7 @@ import { PublicMenuView } from '../features/public-menu/PublicMenuView';
 import { NotFoundView } from '../features/public-menu/NotFoundView';
 import { LoginForm } from '../features/authentication/LoginForm';
 import { MenuAdminView } from '../features/menu-admin/MenuAdminView';
+import { StaffOrdersView } from '../features/staff-orders/StaffOrdersView';
 import { ProtectedRoute } from './ProtectedRoute';
 
 export const AppRoutes: React.FC = () => {
@@ -14,6 +15,17 @@ export const AppRoutes: React.FC = () => {
 
       {/* Staff Authentication Route */}
       <Route path="/login" element={<LoginForm />} />
+
+      {/* Staff POS Order Management Routes */}
+      <Route path="/staff" element={<Navigate to="/staff/orders" replace />} />
+      <Route
+        path="/staff/orders"
+        element={
+          <ProtectedRoute>
+            <StaffOrdersView />
+          </ProtectedRoute>
+        }
+      />
 
       {/* Administrative Dashboard Routes */}
       <Route path="/admin" element={<Navigate to="/admin/menu" replace />} />

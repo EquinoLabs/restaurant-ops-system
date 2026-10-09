@@ -11,6 +11,8 @@ from app.modules.outlets.models import Outlet
 from app.modules.menus.models import MenuCategory, MenuItem
 from app.modules.staff.models import User, OutletMembership
 from app.modules.audit.models import AuditLog
+from app.modules.tables.models import DiningTable
+from app.modules.orders.models import Order, OrderItem
 from app.core.security import hash_password
 
 from sqlalchemy.pool import StaticPool

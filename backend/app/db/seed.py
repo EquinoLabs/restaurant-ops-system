@@ -226,6 +226,29 @@ def seed_database(db: Session):
         db.add(OutletMembership(user_id=town_manager.id, outlet_id=town_outlet.id, role="manager"))
         db.commit()
 
+    # 4. Seed Dining Tables
+    from app.modules.tables.models import DiningTable
+
+    camp_tables = db.query(DiningTable).filter_by(outlet_id=camp_outlet.id).all()
+    if not camp_tables:
+        db.add_all([
+            DiningTable(outlet_id=camp_outlet.id, table_number="T-01", capacity=4, status="available"),
+            DiningTable(outlet_id=camp_outlet.id, table_number="T-02", capacity=2, status="available"),
+            DiningTable(outlet_id=camp_outlet.id, table_number="T-03", capacity=6, status="available"),
+            DiningTable(outlet_id=camp_outlet.id, table_number="T-04", capacity=4, status="available"),
+            DiningTable(outlet_id=camp_outlet.id, table_number="T-05", capacity=8, status="available"),
+        ])
+        db.commit()
+
+    town_tables = db.query(DiningTable).filter_by(outlet_id=town_outlet.id).all()
+    if not town_tables:
+        db.add_all([
+            DiningTable(outlet_id=town_outlet.id, table_number="T-01", capacity=4, status="available"),
+            DiningTable(outlet_id=town_outlet.id, table_number="T-02", capacity=4, status="available"),
+            DiningTable(outlet_id=town_outlet.id, table_number="T-03", capacity=6, status="available"),
+        ])
+        db.commit()
+
     print("Seed data successfully created!")
 
 

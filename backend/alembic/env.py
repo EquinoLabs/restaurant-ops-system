@@ -11,6 +11,8 @@ from app.modules.outlets.models import Outlet # noqa
 from app.modules.menus.models import MenuCategory, MenuItem # noqa
 from app.modules.staff.models import User, OutletMembership # noqa
 from app.modules.audit.models import AuditLog # noqa
+from app.modules.tables.models import DiningTable # noqa
+from app.modules.orders.models import Order, OrderItem # noqa
 
 config = context.config
 
