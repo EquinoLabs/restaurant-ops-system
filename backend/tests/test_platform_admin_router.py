@@ -134,3 +134,91 @@ def test_duplicate_slug_validation(client: TestClient, db_session: Session):
     )
     assert dup_resp.status_code == 422
     assert "already in use" in dup_resp.json()["detail"]["error"]["message"]
+
+
+def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_session: Session):
+    staff_user = db_session.query(User).filter(User.email == "staff@test.com").first()
+    staff_user.is_platform_admin = True
+    db_session.commit()
+
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Provision a business with max_outlets=1
+    create_resp = client.post(
+        "/api/v1/platform/businesses",
+        headers=headers,
+        json={
+            "name": "Single Outlet Cafe",
+            "primary_outlet_name": "Single Outlet Main",
+            "public_slug": "single-outlet-main",
+            "max_outlets": 1,
+            "plan_name": "starter"
+        }
+    )
+    assert create_resp.status_code == 200
+    biz = create_resp.json()
+    biz_id = biz["id"]
+    assert biz["subscription_status"] == "trial"
+    assert biz["plan_name"] == "starter"
+    assert biz["max_outlets"] == 1
+
+    # 2. Attempt to add a 2nd outlet -> exceeds max_outlets=1 -> 422 ValidationError
+    add_outlet_fail = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={
+            "name": "Single Outlet Second",
+            "public_slug": "single-outlet-second"
+        }
+    )
+    assert add_outlet_fail.status_code == 422
+    assert "maximum allowed limit" in add_outlet_fail.json()["detail"]["error"]["message"]
+
+    # 3. Update subscription status to 'active', plan to 'growth', max_outlets to 3
+    patch_resp = client.patch(
+        f"/api/v1/platform/businesses/{biz_id}/subscription",
+        headers=headers,
+        json={
+            "subscription_status": "active",
+            "plan_name": "growth",
+            "max_outlets": 3,
+            "status": "active"
+        }
+    )
+    assert patch_resp.status_code == 200
+    updated_biz = patch_resp.json()
+    assert updated_biz["subscription_status"] == "active"
+    assert updated_biz["plan_name"] == "growth"
+    assert updated_biz["max_outlets"] == 3
+
+    # 4. Now adding 2nd outlet succeeds
+    add_outlet_success = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={
+            "name": "Single Outlet Second",
+            "public_slug": "single-outlet-second"
+        }
+    )
+    assert add_outlet_success.status_code == 200
+
+    # 5. Test invalid status updates
+    invalid_sub_resp = client.patch(
+        f"/api/v1/platform/businesses/{biz_id}/subscription",
+        headers=headers,
+        json={"subscription_status": "invalid_status"}
+    )
+    assert invalid_sub_resp.status_code == 422
+
+    invalid_max_resp = client.patch(
+        f"/api/v1/platform/businesses/{biz_id}/subscription",
+        headers=headers,
+        json={"max_outlets": 0}
+    )
+    assert invalid_max_resp.status_code == 422
+

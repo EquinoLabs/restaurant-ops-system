@@ -15,6 +15,10 @@ export interface PlatformBusiness {
   id: string;
   name: string;
   status: string;
+  subscription_status: string;
+  plan_name: string | null;
+  max_outlets: number | null;
+  trial_ends_at: string | null;
   outlets: PlatformOutlet[];
   created_at: string;
   updated_at: string;
@@ -27,6 +31,18 @@ export interface PlatformBusinessCreatePayload {
   currency?: string;
   timezone?: string;
   address?: string;
+  subscription_status?: string;
+  plan_name?: string;
+  max_outlets?: number | null;
+  trial_ends_at?: string | null;
+}
+
+export interface PlatformSubscriptionUpdatePayload {
+  subscription_status?: string;
+  status?: string;
+  plan_name?: string | null;
+  max_outlets?: number | null;
+  trial_ends_at?: string | null;
 }
 
 export interface PlatformOutletCreatePayload {

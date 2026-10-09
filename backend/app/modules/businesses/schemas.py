@@ -23,6 +23,10 @@ class PlatformBusinessOut(BaseModel):
     id: uuid.UUID
     name: str
     status: str
+    subscription_status: str = "trial"
+    plan_name: Optional[str] = None
+    max_outlets: Optional[int] = None
+    trial_ends_at: Optional[datetime] = None
     outlets: List[PlatformOutletOut] = []
     created_at: datetime
     updated_at: datetime
@@ -37,6 +41,18 @@ class PlatformBusinessCreate(BaseModel):
     currency: str = "INR"
     timezone: str = "Asia/Kolkata"
     address: Optional[str] = None
+    subscription_status: Optional[str] = "trial"
+    plan_name: Optional[str] = None
+    max_outlets: Optional[int] = None
+    trial_ends_at: Optional[datetime] = None
+
+
+class PlatformSubscriptionUpdate(BaseModel):
+    subscription_status: Optional[str] = None
+    status: Optional[str] = None
+    plan_name: Optional[str] = None
+    max_outlets: Optional[int] = None
+    trial_ends_at: Optional[datetime] = None
 
 
 class PlatformOutletCreate(BaseModel):
@@ -53,3 +69,4 @@ class PlatformAssignOwner(BaseModel):
     email: Optional[EmailStr] = None
     password: Optional[str] = None
     display_name: Optional[str] = None
+

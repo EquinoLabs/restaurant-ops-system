@@ -13,6 +13,7 @@ from app.modules.businesses.schemas import (
     PlatformOutletOut,
     PlatformOutletCreate,
     PlatformAssignOwner,
+    PlatformSubscriptionUpdate,
 )
 from app.modules.businesses import platform_service
 
@@ -27,6 +28,16 @@ def list_businesses(db: Session = Depends(get_db)):
 @router.post("/businesses", response_model=PlatformBusinessOut)
 def create_business(data: PlatformBusinessCreate, db: Session = Depends(get_db)):
     biz = platform_service.create_platform_business(db, data)
+    return PlatformBusinessOut.model_validate(biz)
+
+
+@router.patch("/businesses/{business_id}/subscription", response_model=PlatformBusinessOut)
+def update_subscription(
+    business_id: uuid.UUID,
+    data: PlatformSubscriptionUpdate,
+    db: Session = Depends(get_db)
+):
+    biz = platform_service.update_business_subscription(db, business_id=business_id, data=data)
     return PlatformBusinessOut.model_validate(biz)
 
 
@@ -47,3 +58,4 @@ def assign_owner(business_id: uuid.UUID, data: PlatformAssignOwner, db: Session 
         business_name=mem.outlet.business.name if mem.outlet.business else "",
         role=mem.role
     )
+

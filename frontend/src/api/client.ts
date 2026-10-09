@@ -13,6 +13,7 @@ import {
   PlatformBusiness,
   PlatformOutlet,
   PlatformBusinessCreatePayload,
+  PlatformSubscriptionUpdatePayload,
   PlatformOutletCreatePayload,
   PlatformAssignOwnerPayload,
 } from '../types/platform';
@@ -463,4 +464,29 @@ export async function assignPlatformOwner(
 
   return response.json();
 }
+
+export async function updatePlatformSubscription(
+  businessId: string,
+  payload: PlatformSubscriptionUpdatePayload,
+  token: string
+): Promise<PlatformBusiness> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/subscription`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to update business subscription (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 

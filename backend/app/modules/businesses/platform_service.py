@@ -8,9 +8,14 @@ from app.modules.businesses.schemas import (
     PlatformBusinessCreate,
     PlatformOutletCreate,
     PlatformAssignOwner,
+    PlatformSubscriptionUpdate,
 )
 from app.core.security import hash_password
 from app.core.errors import NotFoundError, ValidationError
+
+
+VALID_SUBSCRIPTION_STATUSES = {"trial", "active", "past_due", "cancelled"}
+VALID_ACCOUNT_STATUSES = {"active", "suspended"}
 
 
 def list_platform_businesses(db: Session) -> List[Business]:
@@ -36,9 +41,21 @@ def create_platform_business(db: Session, data: PlatformBusinessCreate) -> Busin
     if existing_slug:
         raise ValidationError(f"Public slug '{slug}' is already in use by another outlet.")
 
+    if data.subscription_status and data.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
+        raise ValidationError(
+            f"Invalid subscription_status '{data.subscription_status}'. Allowed: {sorted(list(VALID_SUBSCRIPTION_STATUSES))}"
+        )
+
+    if data.max_outlets is not None and data.max_outlets < 1:
+        raise ValidationError("max_outlets must be at least 1 or None.")
+
     business = Business(
         name=data.name.strip(),
-        status="active"
+        status="active",
+        subscription_status=data.subscription_status or "trial",
+        plan_name=data.plan_name,
+        max_outlets=data.max_outlets,
+        trial_ends_at=data.trial_ends_at
     )
     db.add(business)
     db.flush()
@@ -58,13 +75,60 @@ def create_platform_business(db: Session, data: PlatformBusinessCreate) -> Busin
     return business
 
 
-def add_outlet_to_business(db: Session, business_id: uuid.UUID, data: PlatformOutletCreate) -> Outlet:
+def update_business_subscription(
+    db: Session, business_id: uuid.UUID, data: PlatformSubscriptionUpdate
+) -> Business:
     """
-    Adds a new Outlet to an existing Business.
+    Updates subscription status, account status, plan name, max outlets, and trial end date for a business.
     """
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
+
+    if data.subscription_status is not None:
+        if data.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
+            raise ValidationError(
+                f"Invalid subscription_status '{data.subscription_status}'. Allowed: {sorted(list(VALID_SUBSCRIPTION_STATUSES))}"
+            )
+        business.subscription_status = data.subscription_status
+
+    if data.status is not None:
+        if data.status not in VALID_ACCOUNT_STATUSES:
+            raise ValidationError(
+                f"Invalid status '{data.status}'. Allowed: {sorted(list(VALID_ACCOUNT_STATUSES))}"
+            )
+        business.status = data.status
+
+    if data.plan_name is not None:
+        business.plan_name = data.plan_name.strip() if data.plan_name else None
+
+    if data.max_outlets is not None:
+        if data.max_outlets < 1:
+            raise ValidationError("max_outlets must be at least 1 or None.")
+        business.max_outlets = data.max_outlets
+
+    if data.trial_ends_at is not None:
+        business.trial_ends_at = data.trial_ends_at
+
+    db.commit()
+    db.refresh(business)
+    return business
+
+
+def add_outlet_to_business(db: Session, business_id: uuid.UUID, data: PlatformOutletCreate) -> Outlet:
+    """
+    Adds a new Outlet to an existing Business, respecting business max_outlets limit.
+    """
+    business = db.query(Business).filter(Business.id == business_id).first()
+    if not business:
+        raise NotFoundError(f"Business with ID '{business_id}' not found.")
+
+    if business.max_outlets is not None:
+        current_count = db.query(Outlet).filter(Outlet.business_id == business_id).count()
+        if current_count >= business.max_outlets:
+            raise ValidationError(
+                f"Business '{business.name}' has reached its maximum allowed limit of {business.max_outlets} outlet(s)."
+            )
 
     slug = data.public_slug.strip().lower()
     existing_slug = db.query(Outlet).filter(Outlet.public_slug == slug).first()
@@ -84,6 +148,7 @@ def add_outlet_to_business(db: Session, business_id: uuid.UUID, data: PlatformOu
     db.commit()
     db.refresh(outlet)
     return outlet
+
 
 
 def assign_owner_to_outlet(

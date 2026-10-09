@@ -5,12 +5,14 @@ import {
   PlatformBusiness,
   PlatformOutlet,
   PlatformBusinessCreatePayload,
+  PlatformSubscriptionUpdatePayload,
   PlatformOutletCreatePayload,
   PlatformAssignOwnerPayload,
 } from '../../types/platform';
 import {
   fetchPlatformBusinesses,
   createPlatformBusiness,
+  updatePlatformSubscription,
   createPlatformOutlet,
   assignPlatformOwner,
 } from '../../api/client';
@@ -29,6 +31,9 @@ export const PlatformAdminView: React.FC = () => {
   const [isOutletModalOpen, setIsOutletModalOpen] = useState<boolean>(false);
   const [selectedBizForOutlet, setSelectedBizForOutlet] = useState<PlatformBusiness | null>(null);
 
+  const [isSubModalOpen, setIsSubModalOpen] = useState<boolean>(false);
+  const [selectedBizForSub, setSelectedBizForSub] = useState<PlatformBusiness | null>(null);
+
   const [isOwnerModalOpen, setIsOwnerModalOpen] = useState<boolean>(false);
   const [selectedOutletForOwner, setSelectedOutletForOwner] = useState<{ bizId: string; outlet: PlatformOutlet } | null>(null);
 
@@ -40,6 +45,21 @@ export const PlatformAdminView: React.FC = () => {
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
+    subscription_status: 'trial',
+    plan_name: 'starter',
+    max_outlets: 2,
+  });
+
+  const [subForm, setSubForm] = useState<{
+    subscription_status: string;
+    status: string;
+    plan_name: string;
+    max_outlets: string;
+  }>({
+    subscription_status: 'trial',
+    status: 'active',
+    plan_name: '',
+    max_outlets: '',
   });
 
   const [outletForm, setOutletForm] = useState<PlatformOutletCreatePayload>({
@@ -100,10 +120,57 @@ export const PlatformAdminView: React.FC = () => {
         currency: 'INR',
         timezone: 'Asia/Kolkata',
         address: '',
+        subscription_status: 'trial',
+        plan_name: 'starter',
+        max_outlets: 2,
       });
       await loadBusinesses();
     } catch (err: any) {
       setError(err.message || 'Failed to create business.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleOpenSubscriptionModal = (biz: PlatformBusiness) => {
+    setSelectedBizForSub(biz);
+    setSubForm({
+      subscription_status: biz.subscription_status || 'trial',
+      status: biz.status || 'active',
+      plan_name: biz.plan_name || '',
+      max_outlets: biz.max_outlets !== null && biz.max_outlets !== undefined ? String(biz.max_outlets) : '',
+    });
+    setIsSubModalOpen(true);
+  };
+
+  const handleUpdateSubscriptionSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!token || !selectedBizForSub) return;
+    setError(null);
+    setSuccessMessage(null);
+
+    const parsedMaxOutlets = subForm.max_outlets.trim() ? parseInt(subForm.max_outlets, 10) : null;
+    if (parsedMaxOutlets !== null && (isNaN(parsedMaxOutlets) || parsedMaxOutlets < 1)) {
+      setError('Max outlets limit must be a positive integer (>= 1) or left blank for unlimited.');
+      return;
+    }
+
+    const payload: PlatformSubscriptionUpdatePayload = {
+      subscription_status: subForm.subscription_status,
+      status: subForm.status,
+      plan_name: subForm.plan_name.trim() || null,
+      max_outlets: parsedMaxOutlets,
+    };
+
+    try {
+      setIsSubmitting(true);
+      const updated = await updatePlatformSubscription(selectedBizForSub.id, payload, token);
+      setSuccessMessage(`Subscription and status for business '${updated.name}' updated successfully!`);
+      setIsSubModalOpen(false);
+      setSelectedBizForSub(null);
+      await loadBusinesses();
+    } catch (err: any) {
+      setError(err.message || 'Failed to update subscription.');
     } finally {
       setIsSubmitting(false);
     }
@@ -175,6 +242,28 @@ export const PlatformAdminView: React.FC = () => {
   };
 
   const totalOutlets = businesses.reduce((acc, b) => acc + (b.outlets?.length || 0), 0);
+  const activeSubscriptions = businesses.filter(b => b.subscription_status === 'active').length;
+
+  const renderSubscriptionBadge = (subStatus: string) => {
+    switch (subStatus) {
+      case 'active':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">Active Sub</span>;
+      case 'past_due':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">Past Due</span>;
+      case 'cancelled':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 uppercase">Cancelled</span>;
+      case 'trial':
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30 uppercase">Trial</span>;
+    }
+  };
+
+  const renderAccountBadge = (status: string) => {
+    if (status === 'suspended') {
+      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase">Suspended</span>;
+    }
+    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">Active</span>;
+  };
 
   if (loading && businesses.length === 0) {
     return (
@@ -250,18 +339,22 @@ export const PlatformAdminView: React.FC = () => {
         )}
 
         {/* Overview Stats Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-8">
           <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-xs font-semibold uppercase text-slate-400">Total Customer Businesses</p>
+            <p className="text-xs font-semibold uppercase text-slate-400">Total Businesses</p>
             <p className="text-3xl font-black text-white mt-1">{businesses.length}</p>
           </div>
           <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-xs font-semibold uppercase text-slate-400">Total Active Outlets</p>
+            <p className="text-xs font-semibold uppercase text-slate-400">Active Outlets</p>
             <p className="text-3xl font-black text-indigo-400 mt-1">{totalOutlets}</p>
+          </div>
+          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
+            <p className="text-xs font-semibold uppercase text-slate-400">Active Subscriptions</p>
+            <p className="text-3xl font-black text-emerald-400 mt-1">{activeSubscriptions}</p>
           </div>
           <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase text-slate-400">System Platform Health</p>
+              <p className="text-xs font-semibold uppercase text-slate-400">Platform Status</p>
               <p className="text-sm font-bold text-emerald-400 mt-1">● Operational</p>
             </div>
             <button
@@ -280,83 +373,200 @@ export const PlatformAdminView: React.FC = () => {
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
           <div>
             <h2 className="text-lg font-bold text-white">Cross-Tenant Business Directory</h2>
-            <p className="text-xs text-slate-400">Manage SaaS client accounts, outlets, and owner account assignments</p>
+            <p className="text-xs text-slate-400">Manage SaaS client accounts, subscription plans, outlet limits, and owner assignments</p>
           </div>
         </div>
 
         {/* Business Directory Cards */}
         <div className="mt-6 space-y-6">
-          {businesses.map((biz) => (
-            <div key={biz.id} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
-                <div className="flex items-center space-x-3">
-                  <h3 className="text-base font-bold text-white">{biz.name}</h3>
-                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">
-                    {biz.status}
-                  </span>
-                  <span className="text-xs font-mono text-slate-500">ID: {biz.id.slice(0, 8)}...</span>
+          {businesses.map((biz) => {
+            const currentOutletCount = biz.outlets?.length || 0;
+            const maxOutlets = biz.max_outlets;
+            const isLimitReached = maxOutlets !== null && maxOutlets !== undefined && currentOutletCount >= maxOutlets;
+
+            return (
+              <div key={biz.id} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <h3 className="text-base font-bold text-white">{biz.name}</h3>
+                    {renderAccountBadge(biz.status)}
+                    {renderSubscriptionBadge(biz.subscription_status)}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 capitalize">
+                      {biz.plan_name ? `${biz.plan_name} Plan` : 'No Plan Set'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
+                      isLimitReached
+                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                        : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                    }`}>
+                      {currentOutletCount} / {maxOutlets !== null && maxOutlets !== undefined ? `${maxOutlets} Outlets` : '∞ Outlets'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center space-x-2 self-start lg:self-auto">
+                    <button
+                      onClick={() => handleOpenSubscriptionModal(biz)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition-colors flex items-center space-x-1"
+                    >
+                      <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      <span>Edit Plan & Subscription</span>
+                    </button>
+
+                    <button
+                      disabled={isLimitReached}
+                      onClick={() => {
+                        setSelectedBizForOutlet(biz);
+                        setIsOutletModalOpen(true);
+                      }}
+                      title={isLimitReached ? `Cannot add outlet. Limit of ${maxOutlets} reached.` : 'Add Outlet'}
+                      className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center space-x-1 ${
+                        isLimitReached
+                          ? 'bg-slate-800/40 text-slate-500 border-slate-800 cursor-not-allowed'
+                          : 'bg-slate-800 hover:bg-slate-700 text-indigo-400 border-slate-700'
+                      }`}
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+                      </svg>
+                      <span>Add Outlet</span>
+                    </button>
+                  </div>
                 </div>
 
-                <button
-                  onClick={() => {
-                    setSelectedBizForOutlet(biz);
-                    setIsOutletModalOpen(true);
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-400 border border-slate-700 text-xs font-semibold transition-colors flex items-center space-x-1 self-start sm:self-auto"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                  </svg>
-                  <span>Add Outlet</span>
-                </button>
-              </div>
-
-              {/* Outlets Grid */}
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                {biz.outlets?.map((outlet) => (
-                  <div key={outlet.id} className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-bold text-white">{outlet.name}</h4>
-                        <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                          /m/{outlet.public_slug}
-                        </span>
+                {/* Outlets Grid */}
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {biz.outlets?.map((outlet) => (
+                    <div key={outlet.id} className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-bold text-white">{outlet.name}</h4>
+                          <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                            /m/{outlet.public_slug}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-400">
+                          {outlet.address || 'No physical address specified'} • {outlet.currency} ({outlet.timezone})
+                        </p>
                       </div>
-                      <p className="mt-1 text-xs text-slate-400">
-                        {outlet.address || 'No physical address specified'} • {outlet.currency} ({outlet.timezone})
-                      </p>
-                    </div>
 
-                    <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
-                      <a
-                        href={`/m/${outlet.public_slug}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-xs font-semibold text-emerald-400 hover:underline flex items-center space-x-1"
-                      >
-                        <span>Preview Live Menu</span>
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
+                      <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
+                        <a
+                          href={`/m/${outlet.public_slug}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-semibold text-emerald-400 hover:underline flex items-center space-x-1"
+                        >
+                          <span>Preview Live Menu</span>
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
 
-                      <button
-                        onClick={() => {
-                          setSelectedOutletForOwner({ bizId: biz.id, outlet });
-                          setIsOwnerModalOpen(true);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors"
-                      >
-                        Assign Owner
-                      </button>
+                        <button
+                          onClick={() => {
+                            setSelectedOutletForOwner({ bizId: biz.id, outlet });
+                            setIsOwnerModalOpen(true);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors"
+                        >
+                          Assign Owner
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </main>
+
+      {/* Edit Subscription & Status Modal */}
+      {isSubModalOpen && selectedBizForSub && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-800">
+              <div>
+                <h3 className="text-lg font-bold text-white">Subscription & Account Controls</h3>
+                <p className="text-xs text-slate-400">{selectedBizForSub.name}</p>
+              </div>
+              <button onClick={() => setIsSubModalOpen(false)} className="text-slate-400 hover:text-white p-1">
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateSubscriptionSubmit} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300">Subscription Status *</label>
+                <select
+                  value={subForm.subscription_status}
+                  onChange={(e) => setSubForm({ ...subForm, subscription_status: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="trial">Trial (Free Evaluation)</option>
+                  <option value="active">Active (Paid & Active)</option>
+                  <option value="past_due">Past Due (Payment Failure)</option>
+                  <option value="cancelled">Cancelled (Terminated)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300">Account Operational Status *</label>
+                <select
+                  value={subForm.status}
+                  onChange={(e) => setSubForm({ ...subForm, status: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="active">Active (Full Access Allowed)</option>
+                  <option value="suspended">Suspended (Access Disabled)</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300">Plan Tier Name</label>
+                <input
+                  type="text"
+                  value={subForm.plan_name}
+                  onChange={(e) => setSubForm({ ...subForm, plan_name: e.target.value })}
+                  placeholder="e.g. starter, growth, enterprise"
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300">Max Outlets Limit (Leave empty for unlimited)</label>
+                <input
+                  type="number"
+                  min="1"
+                  value={subForm.max_outlets}
+                  onChange={(e) => setSubForm({ ...subForm, max_outlets: e.target.value })}
+                  placeholder="e.g. 2"
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
+                <button
+                  type="button"
+                  onClick={() => setIsSubModalOpen(false)}
+                  className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50"
+                >
+                  {isSubmitting ? 'Saving...' : 'Save Subscription Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Provision Business Modal */}
       {isBizModalOpen && (
@@ -404,6 +614,30 @@ export const PlatformAdminView: React.FC = () => {
                   placeholder="e.g. riverside-camp"
                   className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">Plan Tier Name</label>
+                  <input
+                    type="text"
+                    value={bizForm.plan_name || ''}
+                    onChange={(e) => setBizForm({ ...bizForm, plan_name: e.target.value })}
+                    placeholder="e.g. starter"
+                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">Max Outlets Limit</label>
+                  <input
+                    type="number"
+                    min="1"
+                    value={bizForm.max_outlets ?? ''}
+                    onChange={(e) => setBizForm({ ...bizForm, max_outlets: e.target.value ? parseInt(e.target.value, 10) : null })}
+                    placeholder="e.g. 2"
+                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
               </div>
 
               <div>
