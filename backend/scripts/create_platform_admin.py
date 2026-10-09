@@ -5,8 +5,17 @@ import argparse
 # Ensure backend root is on sys.path when running script directly
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import app.modules.businesses.models  # noqa: F401
+import app.modules.outlets.models     # noqa: F401
+import app.modules.menus.models       # noqa: F401
+import app.modules.staff.models       # noqa: F401
+import app.modules.audit.models       # noqa: F401
+import app.modules.tables.models      # noqa: F401
+import app.modules.orders.models      # noqa: F401
 from app.db.session import SessionLocal
 from app.modules.staff.models import User
+
+
 
 
 def promote_user_to_platform_admin(email: str, db=None) -> bool:
