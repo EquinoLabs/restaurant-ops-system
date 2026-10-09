@@ -16,9 +16,11 @@ export const AppRoutes: React.FC = () => {
       {/* Public QR Code Menu Route */}
       <Route path="/m/:publicSlug" element={<PublicMenuView />} />
 
-      {/* Staff Authentication Route */}
+      {/* Staff & Platform Authentication Routes */}
       <Route path="/login" element={<LoginForm />} />
+      <Route path="/pf-login" element={<PlatformLoginForm />} />
       <Route path="/platform/login" element={<PlatformLoginForm />} />
+
 
       {/* Platform Control Plane Routes */}
       <Route path="/platform-admin.html" element={<Navigate to="/platform" replace />} />

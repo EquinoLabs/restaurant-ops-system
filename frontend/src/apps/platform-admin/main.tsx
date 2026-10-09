@@ -14,7 +14,9 @@ export const PlatformAdminApp: React.FC = () => {
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<PlatformLoginForm />} />
+          <Route path="/pf-login" element={<PlatformLoginForm />} />
           <Route path="/" element={<Navigate to="/platform" replace />} />
+
           <Route path="/platform-admin.html" element={<Navigate to="/platform" replace />} />
 
           <Route
