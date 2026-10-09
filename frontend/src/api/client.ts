@@ -9,6 +9,14 @@ import {
   ItemPayload,
 } from '../types/adminMenu';
 import { DiningTable, Order, OrderPayload, OrderStatus } from '../types/orders';
+import {
+  PlatformBusiness,
+  PlatformOutlet,
+  PlatformBusinessCreatePayload,
+  PlatformOutletCreatePayload,
+  PlatformAssignOwnerPayload,
+} from '../types/platform';
+
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
@@ -367,3 +375,92 @@ export async function updateOrderStatus(
 
   return response.json();
 }
+
+// --- Platform Admin API ---
+
+export async function fetchPlatformBusinesses(token: string): Promise<PlatformBusiness[]> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load platform businesses (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function createPlatformBusiness(
+  payload: PlatformBusinessCreatePayload,
+  token: string
+): Promise<PlatformBusiness> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to create business (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function createPlatformOutlet(
+  businessId: string,
+  payload: PlatformOutletCreatePayload,
+  token: string
+): Promise<PlatformOutlet> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/outlets`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to create outlet (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function assignPlatformOwner(
+  businessId: string,
+  payload: PlatformAssignOwnerPayload,
+  token: string
+): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/assign-owner`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to assign owner (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+

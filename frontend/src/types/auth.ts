@@ -12,8 +12,10 @@ export interface UserMe {
   email: string;
   display_name: string;
   status: string;
+  is_platform_admin?: boolean;
   memberships: OutletMembership[];
 }
+
 
 export interface TokenResponse {
   access_token: string;

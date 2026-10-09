@@ -198,6 +198,15 @@ export const MenuAdminView: React.FC = () => {
 
           {/* User Controls & Actions */}
           <div className="flex items-center space-x-3">
+            {user?.is_platform_admin && (
+              <Link
+                to="/platform"
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-bold transition-colors"
+              >
+                <span>Platform Admin</span>
+              </Link>
+            )}
+
             <Link
               to="/staff/orders"
               className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-bold transition-colors"
@@ -207,6 +216,7 @@ export const MenuAdminView: React.FC = () => {
               </svg>
               <span>POS Orders</span>
             </Link>
+
 
             <button
               onClick={handleOpenAuditPanel}

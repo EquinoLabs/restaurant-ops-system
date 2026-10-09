@@ -5,7 +5,9 @@ import { NotFoundView } from '../features/public-menu/NotFoundView';
 import { LoginForm } from '../features/authentication/LoginForm';
 import { MenuAdminView } from '../features/menu-admin/MenuAdminView';
 import { StaffOrdersView } from '../features/staff-orders/StaffOrdersView';
+import { PlatformAdminView } from '../features/platform-admin/PlatformAdminView';
 import { ProtectedRoute } from './ProtectedRoute';
+import { RequirePlatformAdmin } from './RequirePlatformAdmin';
 
 export const AppRoutes: React.FC = () => {
   return (
@@ -15,6 +17,16 @@ export const AppRoutes: React.FC = () => {
 
       {/* Staff Authentication Route */}
       <Route path="/login" element={<LoginForm />} />
+
+      {/* Platform Control Plane Route */}
+      <Route
+        path="/platform"
+        element={
+          <RequirePlatformAdmin>
+            <PlatformAdminView />
+          </RequirePlatformAdmin>
+        }
+      />
 
       {/* Staff POS Order Management Routes */}
       <Route path="/staff" element={<Navigate to="/staff/orders" replace />} />
@@ -37,6 +49,7 @@ export const AppRoutes: React.FC = () => {
           </ProtectedRoute>
         }
       />
+
 
       {/* Unmapped URL 404 Page */}
       <Route
