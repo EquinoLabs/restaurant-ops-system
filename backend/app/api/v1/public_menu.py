@@ -1,0 +1,45 @@
+from fastapi import APIRouter, Depends, Response, Request
+from sqlalchemy.orm import Session
+from app.db.session import get_db
+from app.modules.menus.schemas import PublicOutletMenuResponse
+from app.modules.menus.service import get_public_menu_by_slug, generate_outlet_qr_code
+
+router = APIRouter(prefix="/public", tags=["Public Menu"])
+
+
+@router.get(
+    "/outlets/{slug}/menu",
+    response_model=PublicOutletMenuResponse,
+    summary="Get active public menu for an outlet by QR slug"
+)
+def get_public_menu(slug: str, db: Session = Depends(get_db)):
+    return get_public_menu_by_slug(db=db, public_slug=slug)
+
+
+@router.get(
+    "/outlets/{slug}/qr",
+    summary="Generate permanent scannable PNG QR code for an outlet",
+    responses={
+        200: {
+            "content": {"image/png": {}},
+            "description": "Returns high-resolution PNG image of the permanent outlet QR code."
+        }
+    }
+)
+def get_outlet_qr_code(
+    slug: str,
+    download: bool = False,
+    request: Request = None,
+    db: Session = Depends(get_db)
+):
+    # Determine origin or default frontend URL
+    origin = request.headers.get("origin") if request else None
+    base_url = origin if origin else "http://localhost:5173"
+
+    qr_bytes = generate_outlet_qr_code(db=db, public_slug=slug, base_url=base_url)
+
+    headers = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{slug}-qr-code.png"'
+
+    return Response(content=qr_bytes, media_type="image/png", headers=headers)

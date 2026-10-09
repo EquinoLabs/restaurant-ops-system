@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: roms_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-roms_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-roms_password}
+      POSTGRES_DB: ${POSTGRES_DB:-roms_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-roms_user} -d ${POSTGRES_DB:-roms_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
