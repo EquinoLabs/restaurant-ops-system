@@ -1,56 +1,77 @@
 # ROMS — Multi-Application Architecture Audit & Evolution Strategy
 
 > [!NOTE]
-> This document provides a thorough, evidence-based repository audit of the current ROMS codebase against the **Multi-Application Architecture AI Audit Brief** (`docs/ROMS_Multi_App_Architecture_AI_Audit_Brief.md`). It details verified code facts, structural gaps, tenant isolation models, and an actionable phased roadmap.
+> This document provides a thorough, evidence-based repository audit and revised implementation roadmap for ROMS against the **Multi-Application Architecture AI Audit Brief** (`docs/ROMS_Multi_App_Architecture_AI_Audit_Brief.md`). It incorporates all explicit architectural refinements regarding platform admin security, phased migration, subscription model separation, branding hierarchy, code reuse, and targeted verification.
 
 ---
 
 ## Executive Summary
 
-The current ROMS codebase is a clean, production-ready **modular monolith** with a single FastAPI backend (`backend/app`), Neon PostgreSQL database (`0001`–`0003` migrations), Cloudflare R2 image storage (`boto3`), and a single React + Vite SPA (`frontend/src`).
+The current ROMS codebase is a production-ready **modular monolith** with a single FastAPI backend (`backend/app`), Neon PostgreSQL database (`0001`–`0003` migrations), Cloudflare R2 image storage (`boto3`), and a React + Vite SPA (`frontend/src`).
 
-While the current frontend hosts all screens in a single application bundle, the product requirements call for **three clearly separated user experiences**:
-1. **Platform Admin** — SaaS control plane for ROMS operators to manage customer businesses, outlets, subscriptions, and global audit trails.
-2. **Business Admin** — Restaurant operations console for owners, managers, kitchen staff, and waiters (Menu, R2 Images, Tables, Orders, Audit Logs).
+To support scaling ROMS into a multi-tenant restaurant operations SaaS while preserving simplicity and low operating costs, the system will evolve into **three clearly separated frontend applications sharing one FastAPI backend API, one Neon PostgreSQL database, and one Cloudflare R2 bucket**:
+
+1. **Platform Admin** — SaaS control plane for internal ROMS operators to provision businesses, manage outlets, and oversee platform health.
+2. **Business Admin** — Restaurant management console for owners, managers, kitchen staff, and waiters (Menu Management, R2 Images, Tables, Orders, Audit Logs).
 3. **Customer Website** — Public, multi-tenant digital menu engine opened via QR codes.
 
-**Core Recommendation:**  
-Retain **one FastAPI backend**, **one Neon PostgreSQL database**, and **one Cloudflare R2 bucket**, while evolving the architecture into a **multi-frontend monorepo structure** (`apps/platform-admin`, `apps/business-admin`, `apps/customer-web`). This achieves clean UI separation, distinct security boundaries, and independent frontend deployment without adding microservice complexity or secondary caching infrastructure (no Redis required).
+---
+
+## 1. Architectural Decisions & Key Refinements
+
+### A. Secure Platform-Admin Provisioning
+- **No Public Self-Registration**: Platform admin privileges (`is_platform_admin = True`) can **never** be requested or self-assigned via public registration endpoints or ordinary user APIs.
+- **Provisioning Mechanism**:
+  1. **Initial Bootstrap CLI**: A dedicated server command line utility (`backend/scripts/create_platform_admin.py`) allows server operators to create or promote the first platform admin user directly in the database.
+  2. **Environment Bootstrapping (Optional)**: On server startup, if `INITIAL_PLATFORM_ADMIN_EMAIL` is configured in environment variables, the backend ensures that specific account has `is_platform_admin = True`.
+  3. **Subsequent Admin Management**: Existing platform administrators can grant or revoke platform admin privileges for other users via protected platform API routes (`/api/v1/platform/admins`).
+- **Authorization Guard**: A backend dependency `get_current_platform_admin` ([deps.py](file:///C:/Lakshya/Coding/EquinoLabs/restaurant-ops-system/backend/app/api/deps.py)) strictly verifies `current_user.is_platform_admin is True`.
+
+### B. Distinct Subscription & Account Status Model
+To avoid enforcing unapproved commercial rules, account lifecycle, billing status, and plan limits are clearly separated:
+- **Operational Account Status (`Business.status`)**: Controls overall operational state (`"active"`, `"suspended"`). A suspended business cannot access admin features or serve public menus.
+- **Subscription Billing Status (`Business.subscription_status`)**: Tracks billing lifecycle (`"trial"`, `"active"`, `"past_due"`, `"cancelled"`).
+- **Plan Tier Name (`Business.plan_name`)**: Informational string identifier (e.g. `"starter"`, `"growth"`, `"enterprise"`).
+- **Outlet Entitlement Limit (`Business.max_outlets`)**: Nullable integer column. If `null`, no hard limit is enforced. If set (e.g. `2`), backend prevents creating outlets beyond the limit.
+
+### C. Outlet-Level Branding Model & Backward Compatibility
+- **Initial Scope (Outlet-Level)**: Branding parameters (`logo_url`, `cover_image_url`, `primary_color`, `accent_color`) will be placed directly on the `outlets` table.
+- **Rationale**: Outlets under the same business (such as a traditional sit-down restaurant vs. a casual riverside camp) frequently require distinct visual identity, logos, and accent themes. Placing branding directly on `outlets` allows immediate lookup during public menu queries without extra joins.
+- **Migration & Compatibility Guarantee**:
+  - All branding columns are nullable.
+  - Image fields store R2 object keys and are converted to public URLs using the existing `get_public_image_url()` helper.
+  - If branding columns are `null`, the customer website defaults gracefully to standard ROMS themes.
+  - Existing public URLs (`/m/:publicSlug`) and printed QR codes remain **100% backward compatible**.
+
+### D. Frontend Strategy: Incremental Separation
+Instead of an immediate disruptive folder rewrite, frontend evolution will occur in safe steps:
+- **Phase 1–2**: Implement Platform Admin as a dedicated, route-guarded view section (`/platform`) inside the existing SPA layout, reusing existing auth context and HTTP client abstractions.
+- **Phase 3**: Transition `frontend/` into a Vite multi-entry or workspace structure (`apps/customer-web`, `apps/business-admin`, `apps/platform-admin`, `packages/shared`) so that the customer QR menu bundle contains zero administrative JavaScript or secret credentials.
+
+### E. Code & Infrastructure Reuse
+- **Shared FastAPI Core**: Reuse existing SQLAlchemy models (`Business`, `Outlet`, `User`, `OutletMembership`, `AuditLog`), authentication primitives (`security.py`), error handlers (`errors.py`), and R2 storage helpers (`r2_storage.py`).
+- **Shared Frontend Services**: Extend `frontend/src/api/client.ts` and `AuthContext.tsx` without duplicating HTTP header logic or token handling.
 
 ---
 
-## 1. Verified Architecture vs. Audit Brief Vision
-
-| Component | Audit Brief Vision | Verified Current State in Codebase | Verification Status |
-| :--- | :--- | :--- | :--- |
-| **Backend API** | Single FastAPI service with modular domain boundaries | Single FastAPI app (`backend/app/main.py`) with routers (`public_menu`, `auth`, `admin_menu`, `staff_orders`) | **Verified in code** |
-| **Database** | Neon PostgreSQL with Alembic migrations | Neon cloud PostgreSQL with Alembic (`0001_initial_r1_schema.py`, `0002_r2_staff_and_audit.py`, `0003_r3_tables_and_orders.py`) | **Verified in code** |
-| **Image Storage** | Cloudflare R2, object keys in DB, public URL derivation | Cloudflare R2 via `boto3`, keys in `MenuItem.image_url`, derived via `get_public_image_url()` in `config.py` | **Verified in code** |
-| **Frontend UIs** | 3 separate applications (Platform, Business, Customer) | 1 React + Vite SPA with internal client-side routing (`/m/:slug`, `/login`, `/admin/menu`, `/staff/orders`) | **Verified in code** |
-| **Platform Admin** | Internal ROMS company console | **0% implemented.** No platform admin endpoints, no `is_platform_admin` flag on `User` | **Verified in code** |
-| **Business Admin** | Owner/Manager/Staff ops console | **85% implemented.** Menu management, R2 file uploads, table setup, POS order creation, kitchen Pipeline | **Verified in code** |
-| **Customer Web** | Public QR scan digital menu | **90% implemented.** Public menu lookup by slug, derived R2 image URLs, stock status, QR generator endpoint | **Verified in code** |
-
----
-
-## 2. Deep Component Audit
+## 2. Component Structure & Data Flow
 
 ```mermaid
 graph TD
-    subgraph Frontend ["Frontend Layer (Current SPA -> Target Monorepo)"]
-        CA["Customer Web (Public QR Menu)<br/>/m/:publicSlug"]
-        BA["Business Admin Console<br/>/admin/menu, /staff/orders"]
-        PA["Platform Admin Console<br/>(Target: /platform/*)"]
+    subgraph Frontends ["Frontend Applications"]
+        CA["Customer Web Engine<br/>(/m/:publicSlug)"]
+        BA["Business Admin Console<br/>(/admin/menu, /staff/orders)"]
+        PA["Platform Admin Console<br/>(/platform/*)"]
     end
 
     subgraph Backend ["FastAPI Backend (Shared Domain Core)"]
         PR["Public Router (/api/v1/public/*)"]
         AR["Admin Router (/api/v1/outlets/*)"]
         SR["Staff Orders Router (/api/v1/orders/*)"]
-        PAR["Platform Router (Target: /api/v1/platform/*)"]
+        PAR["Platform Router (/api/v1/platform/*)"]
     end
 
-    subgraph Storage ["Data & File Stores"]
+    subgraph Storage ["Shared Infrastructure"]
         DB[(Neon PostgreSQL)]
         R2[(Cloudflare R2 Bucket)]
     end
@@ -67,83 +88,55 @@ graph TD
     PAR --> DB
 ```
 
-### A. Data Model & Tenant Isolation Audit
-- **Business (`app/modules/businesses/models.py`)**: Root tenant entity (`id`, `name`, `status`).
-- **Outlet (`app/modules/outlets/models.py`)**: Physical restaurant location (`id`, `business_id`, `name`, `public_slug`, `currency`, `timezone`, `address`, `status`).
-- **User & Membership (`app/modules/staff/models.py`)**:
-  - `User`: Global user account (`email`, `password_hash`, `display_name`, `status`).
-  - `OutletMembership`: Multi-tenant assignment joining `User` to `Outlet` with role (`owner`, `manager`, `waiter`, `kitchen`). Unique constraint on `(user_id, outlet_id)`.
-- **Tenant Isolation Verification**:
-  - Backend dependency `RequireOutletRole` ([deps.py](file:///C:/Lakshya/Coding/EquinoLabs/restaurant-ops-system/backend/app/api/deps.py#L41-L65)) verifies that `current_user` has an active `OutletMembership` for the target `outlet_id` before allowing administrative or staff operations.
-  - Public menu lookup ([service.py](file:///C:/Lakshya/Coding/EquinoLabs/restaurant-ops-system/backend/app/modules/menus/service.py#L16-L41)) filters strictly by `public_slug` and `status == 'active'`.
+---
 
-### B. Security & Platform Admin Gaps Identified
-1. **Missing Platform Admin Role**: Currently, `User` has no `is_platform_admin` boolean flag or global platform role. `OutletMembership` only handles outlet-level roles (`owner`, `manager`, `waiter`, `kitchen`).
-2. **Missing Platform API Router**: There are no endpoints to list all businesses across tenants, provision new restaurant businesses, or manage global platform subscriptions.
-3. **Missing Database-driven Branding**: `Outlet` and `Business` models lack columns for custom branding (`logo_url`, `cover_image_url`, `primary_color`, `accent_color`). Branding is currently hardcoded in Tailwind CSS themes.
-4. **Missing Subscription Entitlement Tracking**: `Business` lacks fields for tracking SaaS tier, subscription status (`trial`, `active`, `past_due`, `cancelled`), and max outlet limits.
+## 3. Phased Implementation Roadmap
+
+### Phase 1: Platform Admin Foundation (Backend Guard & Business Provisioning)
+- **Task 1.1: Database Migration `0004_platform_admin.py`**
+  - Add `is_platform_admin: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)` to `users` table.
+  - Create CLI script `backend/scripts/create_platform_admin.py` to securely promote initial platform admin accounts.
+- **Task 1.2: Backend Platform Authorization & Router (`app/api/v1/platform.py`)**
+  - Add `get_current_platform_admin` dependency in `app/api/deps.py`.
+  - Implement endpoints:
+    - `GET /api/v1/platform/businesses`: List all businesses, outlets, and account statuses across tenants.
+    - `POST /api/v1/platform/businesses`: Provision a new business and its primary outlet.
+    - `POST /api/v1/platform/businesses/{business_id}/outlets`: Add an outlet to a business.
+    - `POST /api/v1/platform/businesses/{business_id}/assign-owner`: Create/assign a restaurant owner user to an outlet.
+- **Task 1.3: Minimal Platform Admin UI (`PlatformAdminView.tsx`)**
+  - Route `/platform` guarded by `is_platform_admin`.
+  - UI to view business list, provision new businesses/outlets, and assign owner credentials.
+
+### Phase 2: Account Status & Subscription Management
+- **Task 2.1: Additive Migration `0005_business_subscriptions.py`**
+  - Add fields to `businesses`: `subscription_status` (`"trial"`, `"active"`, `"past_due"`, `"cancelled"`), `plan_name` (string), `max_outlets` (nullable int), `trial_ends_at` (nullable datetime).
+- **Task 2.2: Platform Subscription Endpoints**
+  - `PATCH /api/v1/platform/businesses/{business_id}/subscription`: Update subscription status, plan name, max outlets, or suspend/activate account.
+  - Enforce `max_outlets` check when creating new outlets.
+
+### Phase 3: Database-Driven Outlet Branding
+- **Task 3.1: Additive Migration `0006_outlet_branding.py`**
+  - Add `logo_url`, `cover_image_url`, `primary_color`, `accent_color` to `outlets` table.
+- **Task 3.2: Public Menu & Customer Web Integration**
+  - Update `PublicOutletMenuResponse` in `schemas.py` to return derived branding URLs and color settings.
+  - Update `PublicMenuView.tsx` to render dynamic primary/accent colors and logo/banner header.
+
+### Phase 4: Frontend Workspace Separation
+- Reorganize frontend into `apps/customer-web`, `apps/business-admin`, `apps/platform-admin` and `packages/shared` using Vite multi-entry configuration.
 
 ---
 
-## 3. User Review Required
+## 4. Verification & Testing Strategy
 
-> [!IMPORTANT]
-> **No Code Changes Are Being Made in This Step.**  
-> Per the user request and brief instructions, this is a planning and architecture discovery document. Code modifications will only occur after your review and explicit approval of the proposed phases.
+### A. Targeted Tests During Implementation
+1. **Platform Admin Security Test**:
+   - Verify that regular users (owners, managers, waiters) receive `403 Forbidden` when accessing `/api/v1/platform/*` endpoints.
+   - Verify that platform admin users can successfully list cross-tenant businesses and provision new outlets.
+2. **Cross-Tenant Isolation Test**:
+   - Verify that a Business A owner cannot read, update, or upload images for Business B outlets.
+3. **QR & Public Menu Regression Test**:
+   - Verify that `/api/v1/public/outlets/{slug}/menu` continues to work seamlessly for existing outlets and QR URLs.
 
-> [!NOTE]
-> **Monorepo Strategy Recommendation**:  
-> We recommend a **single repository with Vite multi-page / workspace separation** (`apps/customer-web`, `apps/business-admin`, `apps/platform-admin`). This avoids repository fragmentation while ensuring that building or deploying the customer website does not bundle administrative code or credentials.
-
----
-
-## 4. Phased Implementation Roadmap
-
-### Phase 1: Platform Admin Foundation & Multi-Tenant Entitlements
-- **Backend Schema (`0004_platform_and_branding.py`)**:
-  - Add `is_platform_admin: bool = False` to `users` table.
-  - Add subscription fields to `businesses`: `plan_name` (default: `"free_trial"`), `subscription_status` (default: `"active"`), `max_outlets` (default: 2), `trial_ends_at`.
-  - Add branding fields to `outlets`: `logo_url`, `cover_image_url`, `primary_color`, `accent_color`.
-- **Backend Platform Router (`app/api/v1/platform.py`)**:
-  - `RequirePlatformAdmin` dependency in `deps.py`.
-  - `GET /api/v1/platform/businesses`: List all businesses & outlets.
-  - `POST /api/v1/platform/businesses`: Provision new restaurant business & initial owner account.
-  - `PATCH /api/v1/platform/businesses/{id}/subscription`: Update subscription plan & status manually.
-- **Frontend Platform Admin App**:
-  - Create `apps/platform-admin` or route section `/platform` for ROMS company owners to manage tenant onboarding and platform metrics.
-
-### Phase 2: Database-Driven Outlet Branding for Customer Web
-- **Public Menu Endpoint Enhancement**:
-  - Update `PublicOutletMenuResponse` in `schemas.py` to include outlet branding settings (`logo_url`, `cover_image_url`, `primary_color`, `accent_color`).
-  - Resolve logo & cover image keys using `get_public_image_url()`.
-- **Customer Web Customization**:
-  - Update customer web UI (`PublicMenuView.tsx`) to apply dynamic CSS variables for `primary_color` and `accent_color`, and display custom outlet logo / banner header.
-
-### Phase 3: Frontend Monorepo Restructuring & UI Separation
-- Reorganize `frontend/` into workspace applications:
-  - `apps/customer-web`: Ultra-lightweight customer QR menu SPA (fast initial load, zero admin JS bundled).
-  - `apps/business-admin`: Restaurant staff/owner portal (Menu Admin, POS Orders, Tables, R2 Uploads).
-  - `apps/platform-admin`: ROMS internal platform console.
-  - `packages/shared`: Shared API client, TypeScript types, and UI primitives.
-
-### Phase 4: Subscription Entitlement Enforcement & Manual Billing Controls
-- Add backend entitlement guards (e.g. enforcing `max_outlets` check during outlet creation, restricting active menu edits if subscription is `past_due` or `suspended`).
-
----
-
-## 5. Verification Plan
-
-### Automated Tests
-- Backend pytest commands:
-  ```powershell
-  $env:PYTHONPATH="backend"; .\.venv\Scripts\python.exe -m pytest backend/tests
-  ```
-- Frontend Vitest & build commands:
-  ```cmd
-  cd frontend && npm test -- --run && npm run build
-  ```
-
-### Manual Verification Steps
-1. Verify platform admin provisioning by creating a test platform user and verifying access to cross-tenant business listing.
-2. Verify customer menu branding by changing outlet primary/accent colors in DB and asserting dynamic styling on `/m/:publicSlug`.
-3. Verify tenant boundary isolation by confirming that a Business A owner cannot access `/api/v1/outlets/{business_b_outlet_id}/admin/menu`.
+### B. Full Test Suite Execution (At Phase Completion)
+- Backend Pytest Suite: `$env:PYTHONPATH="backend"; .\.venv\Scripts\python.exe -m pytest backend/tests`
+- Frontend Vitest & Build: `cd frontend && npm test -- --run && npm run build`
