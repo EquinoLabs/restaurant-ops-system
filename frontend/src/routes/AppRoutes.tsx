@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { PublicMenuView } from '../features/public-menu/PublicMenuView';
 import { NotFoundView } from '../features/public-menu/NotFoundView';
 import { LoginForm } from '../features/authentication/LoginForm';
+import { PlatformLoginForm } from '../features/authentication/PlatformLoginForm';
 import { MenuAdminView } from '../features/menu-admin/MenuAdminView';
 import { StaffOrdersView } from '../features/staff-orders/StaffOrdersView';
 import { PlatformAdminView } from '../features/platform-admin/PlatformAdminView';
@@ -17,8 +18,10 @@ export const AppRoutes: React.FC = () => {
 
       {/* Staff Authentication Route */}
       <Route path="/login" element={<LoginForm />} />
+      <Route path="/platform/login" element={<PlatformLoginForm />} />
 
-      {/* Platform Control Plane Route */}
+      {/* Platform Control Plane Routes */}
+      <Route path="/platform-admin.html" element={<Navigate to="/platform" replace />} />
       <Route
         path="/platform"
         element={
@@ -27,6 +30,7 @@ export const AppRoutes: React.FC = () => {
           </RequirePlatformAdmin>
         }
       />
+
 
       {/* Staff POS Order Management Routes */}
       <Route path="/staff" element={<Navigate to="/staff/orders" replace />} />
