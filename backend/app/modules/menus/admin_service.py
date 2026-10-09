@@ -280,3 +280,97 @@ def toggle_item_availability(
         db.refresh(item)
 
     return item
+
+
+def upload_item_image(
+    db: Session,
+    outlet_id: uuid.UUID,
+    item_id: uuid.UUID,
+    actor_id: uuid.UUID,
+    file_bytes: bytes,
+    filename: str,
+) -> MenuItem:
+    from app.core import r2_storage
+
+    item = db.query(MenuItem).filter(MenuItem.id == item_id, MenuItem.outlet_id == outlet_id).first()
+    if not item:
+        raise NotFoundError(f"Menu item with ID '{item_id}' not found in outlet '{outlet_id}'")
+
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+    old_image_key = item.image_url
+
+    # 1. Upload new image object to R2
+    new_image_key = r2_storage.upload_item_image(
+        outlet_id=outlet_id,
+        item_id=item_id,
+        file_bytes=file_bytes,
+        filename=filename,
+    )
+
+    # 2. Update DB reference
+    try:
+        item.image_url = new_image_key
+        if outlet:
+            log_audit(
+                db=db,
+                business_id=outlet.business_id,
+                outlet_id=outlet_id,
+                actor_user_id=actor_id,
+                action="ITEM_IMAGE_UPDATE",
+                entity_type="menu_item",
+                entity_id=item.id,
+                metadata_json={"old_key": old_image_key, "new_key": new_image_key},
+            )
+        db.commit()
+        db.refresh(item)
+    except Exception as e:
+        db.rollback()
+        # Best effort cleanup of newly uploaded object if DB update fails
+        r2_storage.delete_object(new_image_key)
+        raise e
+
+    # 3. Best effort cleanup of previous object if it existed
+    if old_image_key:
+        r2_storage.delete_object(old_image_key)
+
+    return item
+
+
+def delete_item_image(
+    db: Session,
+    outlet_id: uuid.UUID,
+    item_id: uuid.UUID,
+    actor_id: uuid.UUID,
+) -> MenuItem:
+    from app.core import r2_storage
+
+    item = db.query(MenuItem).filter(MenuItem.id == item_id, MenuItem.outlet_id == outlet_id).first()
+    if not item:
+        raise NotFoundError(f"Menu item with ID '{item_id}' not found in outlet '{outlet_id}'")
+
+    if not item.image_url:
+        return item
+
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+    old_image_key = item.image_url
+
+    item.image_url = None
+    if outlet:
+        log_audit(
+            db=db,
+            business_id=outlet.business_id,
+            outlet_id=outlet_id,
+            actor_user_id=actor_id,
+            action="ITEM_IMAGE_DELETE",
+            entity_type="menu_item",
+            entity_id=item.id,
+            metadata_json={"old_key": old_image_key},
+        )
+    db.commit()
+    db.refresh(item)
+
+    # Best effort cleanup of R2 object after DB commit succeeds
+    r2_storage.delete_object(old_image_key)
+
+    return item
+

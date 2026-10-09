@@ -17,7 +17,10 @@ import {
   updateMenuItem,
   toggleItemAvailability,
   fetchAuditLogs,
+  uploadItemImage,
+  deleteItemImage,
 } from '../../api/client';
+
 import { CategoryEditorModal } from './CategoryEditorModal';
 import { ItemEditorModal } from './ItemEditorModal';
 import { AuditHistoryPanel } from './AuditHistoryPanel';
@@ -103,6 +106,21 @@ export const MenuAdminView: React.FC = () => {
     }
     await loadMenuData();
   };
+
+  const handleUploadItemImage = async (file: File) => {
+    if (!token || !selectedOutlet || !editingItem) return;
+    const updated = await uploadItemImage(selectedOutlet.outlet_id, editingItem.id, file, token);
+    setEditingItem(updated);
+    await loadMenuData();
+  };
+
+  const handleDeleteItemImage = async () => {
+    if (!token || !selectedOutlet || !editingItem) return;
+    const updated = await deleteItemImage(selectedOutlet.outlet_id, editingItem.id, token);
+    setEditingItem(updated);
+    await loadMenuData();
+  };
+
 
   const handleToggleAvailability = async (item: AdminMenuItem) => {
     if (!token) return;
@@ -489,7 +507,10 @@ export const MenuAdminView: React.FC = () => {
         item={editingItem}
         defaultCategoryId={targetCatIdForItem}
         currency={menuData?.currency}
+        onUploadImage={editingItem ? handleUploadItemImage : undefined}
+        onDeleteImage={editingItem ? handleDeleteItemImage : undefined}
       />
+
 
       {/* Audit History Panel */}
       <AuditHistoryPanel

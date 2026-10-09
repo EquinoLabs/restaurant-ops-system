@@ -2,7 +2,8 @@ from uuid import UUID
 from decimal import Decimal
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+from app.core.config import get_public_image_url
 
 
 # --- Public Schemas ---
@@ -17,6 +18,11 @@ class PublicMenuItemSchema(BaseModel):
     sort_order: int
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def resolve_public_image_url(cls, v: Optional[str]) -> Optional[str]:
+        return get_public_image_url(v)
 
 
 class PublicMenuCategorySchema(BaseModel):
@@ -98,6 +104,12 @@ class AdminMenuItemSchema(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("image_url", mode="before")
+    @classmethod
+    def resolve_admin_image_url(cls, v: Optional[str]) -> Optional[str]:
+        return get_public_image_url(v)
+
 
 
 class AdminMenuCategorySchema(BaseModel):

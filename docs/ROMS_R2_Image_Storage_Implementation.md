@@ -1,6 +1,6 @@
 # ROMS — Cloudflare R2 Image Storage Implementation Specification
 
-**Document version:** 1.0  
+**Document version:** 1.1  
 **Date:** 10 October 2026  
 **Status:** Implementation guidance — inspect the current repository before coding  
 **Scope:** Public food/menu images and restaurant branding assets  
@@ -74,7 +74,7 @@ The example domain and IDs are illustrative. Do not use them as real deployment 
 
 An object key is not a URL. Constructing a URL in code does not itself make an object publicly readable. The chosen public domain must be configured to serve the relevant R2 bucket, and the bucket/domain access policy must be verified.
 
-Use a Cloudflare R2 custom domain for production public image delivery. Do not assume the development `r2.dev` URL can be constructed from the account ID and bucket name. Use the actual configured URL from Cloudflare. Keep development and production domains configurable.
+Use Cloudflare's **Public Development URL (`r2.dev`) for initial development/testing** if no custom domain is available yet. Enable it only for the bucket intended to contain public, non-sensitive menu images. Copy the exact base URL Cloudflare displays; never derive it from the account ID or bucket name. The development URL is intended for testing, is rate-limited, and is not the production choice. For production, connect a custom domain to the R2 bucket and set `R2_PUBLIC_BASE_URL` to that exact domain. Keep development and production values configurable so moving to a custom domain requires a configuration change rather than database rewrites.
 
 ---
 
@@ -225,7 +225,9 @@ R2_ACCOUNT_ID=replace_with_account_id
 R2_ACCESS_KEY_ID=replace_with_access_key_id
 R2_SECRET_ACCESS_KEY=replace_with_secret_access_key
 R2_BUCKET_NAME=replace_with_bucket_name
-R2_PUBLIC_BASE_URL=https://images.example.com
+# Development: use the exact r2.dev base URL displayed by Cloudflare.
+# Production later: replace with the configured custom image domain.
+R2_PUBLIC_BASE_URL=https://replace-with-the-exact-cloudflare-provided-base-url
 R2_MAX_IMAGE_BYTES=5242880
 ```
 
@@ -273,15 +275,24 @@ Use the correct bucket name and credentials from environment configuration, the 
 
 ### Public image domain
 
-Before production use:
-1. Create/select an R2 bucket.
-2. Configure the intended custom domain in Cloudflare for the bucket.
-3. Verify the domain is active and serves a test image.
-4. Configure `R2_PUBLIC_BASE_URL` with that exact domain.
-5. Test an object URL from a browser without application credentials.
-6. Confirm that private buckets/documents are not accidentally exposed.
+#### Development now (no custom domain yet)
+1. In the `roms-public-images` bucket, enable **Public Development URL** in the bucket's Settings if you want to test real image delivery.
+2. Confirm the bucket is intended only for public, non-sensitive images. Anything uploaded to this public bucket can be read by anyone who has the object URL.
+3. Copy the exact `r2.dev` base URL shown by Cloudflare. Do not construct it from the account ID or bucket name.
+4. Set the backend development environment's `R2_PUBLIC_BASE_URL` to that exact base URL (without appending an individual object key).
+5. Upload a harmless test image and open its exact object URL in a private/incognito browser window.
+6. Do not assume opening the bucket root will list objects; test a specific object URL.
 
-Do not invent a domain or assume the domain is already configured. If this setup is not complete, support local tests with a fake URL builder and leave production configuration pending. Do not make account or DNS changes without explicit user approval.
+The `r2.dev` endpoint is for development/testing, is rate-limited, and lacks the production controls available with a custom domain. Do not treat it as the production image domain.
+
+#### Production later (custom domain)
+1. Choose a domain or subdomain and configure it as a custom domain for the R2 bucket in Cloudflare.
+2. Wait until Cloudflare reports the domain is active and verify it serves a test image.
+3. Set the production `R2_PUBLIC_BASE_URL` to that exact custom domain.
+4. Test an object URL in a browser without application credentials.
+5. Confirm that private buckets/documents are not accidentally exposed.
+
+Switching from `r2.dev` to a custom domain should only require changing `R2_PUBLIC_BASE_URL` if the object keys remain the same. Do not store the full public URL in PostgreSQL. Do not invent a domain or assume one is already configured. Do not make account or DNS changes without explicit user approval.
 
 ### Caching
 
@@ -375,7 +386,7 @@ Follow the project's existing test structure and conventions.
 Mock R2/S3 calls in automated tests. Unit tests must not require real Cloudflare credentials or alter a live bucket.
 
 ### Manual verification
-When credentials and domain configuration are ready:
+When credentials and public URL configuration are ready:
 - Upload a small valid image.
 - Confirm the object exists in the intended R2 bucket.
 - Confirm PostgreSQL stores only the object key, not an expiring presigned URL.
@@ -395,7 +406,7 @@ When credentials and domain configuration are ready:
 
 ## 12. Existing implementation and migration precautions
 
-The previous project used `boto3`, uploaded to an R2 object key, saved metadata, and generated presigned URLs for private objects. The reusable idea is **store the object key, generate a URL at response time**.
+The previous project used `boto3`, uploaded to an R2 object key, saved metadata, and generated presigned URLs for private objects. The reusable idea is **store the object key, generate a URL at response time**. For ROMS public menu photos, construct a stable public URL from `R2_PUBLIC_BASE_URL` plus the object key; do not generate presigned GET URLs. Initially, the base URL may be Cloudflare's actual `r2.dev` development URL. Later, switch the configuration to the custom domain.
 
 Do not copy the previous code verbatim. Known areas to improve:
 - It manually constructed an `r2.dev` URL from bucket/account information; configure and verify the real public base URL instead.

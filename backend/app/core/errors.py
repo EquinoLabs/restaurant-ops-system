@@ -69,3 +69,13 @@ class ValidationError(APIException):
             code=code,
             message=message
         )
+
+
+class InternalServerError(APIException):
+    def __init__(self, message: str = "Internal server error", code: str = "INTERNAL_SERVER_ERROR"):
+        super().__init__(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            code=code,
+            message=message
+        )
+

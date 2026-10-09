@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
+    # Cloudflare R2 Configuration
+    R2_ACCOUNT_ID: Optional[str] = None
+    R2_ACCESS_KEY_ID: Optional[str] = None
+    R2_SECRET_ACCESS_KEY: Optional[str] = None
+    R2_BUCKET_NAME: str = "roms-public-images"
+    R2_PUBLIC_BASE_URL: str = "https://pub-roms-dev.r2.dev"
+    R2_MAX_IMAGE_BYTES: int = 5 * 1024 * 1024  # 5 MiB limit
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
@@ -95,3 +103,21 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_public_image_url(key_or_url: Optional[str]) -> Optional[str]:
+    """
+    Derives full public image URL from stored object key or returns legacy URL as-is.
+    """
+    if not key_or_url:
+        return None
+    key_or_url = key_or_url.strip()
+    if not key_or_url:
+        return None
+    if key_or_url.startswith("http://") or key_or_url.startswith("https://"):
+        return key_or_url
+    base = (settings.R2_PUBLIC_BASE_URL or "").rstrip("/")
+    if not base:
+        return key_or_url
+    return f"{base}/{key_or_url.lstrip('/')}"
+

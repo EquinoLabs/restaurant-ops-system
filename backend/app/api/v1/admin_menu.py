@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -130,6 +130,53 @@ def toggle_item_availability(
         db, item_id=item_id, actor_id=current_user.id, is_available=request.is_available
     )
     return AdminMenuItemSchema.model_validate(item)
+
+
+@router.post(
+    "/outlets/{outlet_id}/items/{item_id}/image",
+    response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+)
+async def upload_item_image(
+    outlet_id: uuid.UUID,
+    item_id: uuid.UUID,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    file_bytes = await file.read()
+    item = admin_service.upload_item_image(
+        db=db,
+        outlet_id=outlet_id,
+        item_id=item_id,
+        actor_id=current_user.id,
+        file_bytes=file_bytes,
+        filename=file.filename or "image.jpg",
+    )
+    return AdminMenuItemSchema.model_validate(item)
+
+
+@router.delete(
+    "/outlets/{outlet_id}/items/{item_id}/image",
+    response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+)
+def delete_item_image(
+    outlet_id: uuid.UUID,
+    item_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    item = admin_service.delete_item_image(
+        db=db,
+        outlet_id=outlet_id,
+        item_id=item_id,
+        actor_id=current_user.id,
+    )
+    return AdminMenuItemSchema.model_validate(item)
+
 
 
 @router.get(

@@ -194,6 +194,56 @@ export async function toggleItemAvailability(
   return response.json();
 }
 
+export async function uploadItemImage(
+  outletId: string,
+  itemId: string,
+  file: File,
+  token: string
+): Promise<AdminMenuItem> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/items/${itemId}/image`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to upload image (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function deleteItemImage(
+  outletId: string,
+  itemId: string,
+  token: string
+): Promise<AdminMenuItem> {
+  const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/items/${itemId}/image`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to delete image (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+
 export async function fetchAuditLogs(outletId: string, token: string): Promise<AuditLogItem[]> {
   const response = await fetch(`${API_BASE_URL}/outlets/${outletId}/audit-logs`, {
     headers: {
