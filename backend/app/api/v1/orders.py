@@ -24,6 +24,8 @@ def _verify_order_membership(db: Session, order_id: uuid.UUID, user_id: uuid.UUI
     ).first()
     if not membership:
         raise ForbiddenError("You do not have access to this outlet")
+    if not membership.outlet or not membership.outlet.business or membership.outlet.business.status != "active":
+        raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
     return order
 
 

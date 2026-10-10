@@ -21,7 +21,7 @@ export const RequirePlatformAdmin: React.FC<RequirePlatformAdminProps> = ({ chil
   }
 
   if (!token || !user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/pf-login" replace />;
   }
 
   if (!user.is_platform_admin) {

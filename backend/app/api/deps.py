@@ -68,7 +68,11 @@ class RequireOutletRole:
         if not membership:
             raise ForbiddenError("You do not have administrative access to this outlet")
 
+        if membership.outlet and membership.outlet.business and membership.outlet.business.status != "active":
+            raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
+
         if self.allowed_roles and membership.role not in self.allowed_roles:
             raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
 
         return membership
+

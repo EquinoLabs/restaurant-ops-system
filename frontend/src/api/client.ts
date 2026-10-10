@@ -16,6 +16,8 @@ import {
   PlatformSubscriptionUpdatePayload,
   PlatformOutletCreatePayload,
   PlatformAssignOwnerPayload,
+  PlatformAdminUser,
+  PlatformAuditLogsResponse,
 } from '../types/platform';
 
 
@@ -488,5 +490,94 @@ export async function updatePlatformSubscription(
 
   return response.json();
 }
+
+export async function fetchPlatformAdmins(token: string): Promise<PlatformAdminUser[]> {
+  const response = await fetch(`${API_BASE_URL}/platform/admins`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to fetch platform admins (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function grantPlatformAdmin(userId: string, token: string): Promise<PlatformAdminUser> {
+  const response = await fetch(`${API_BASE_URL}/platform/admins/${userId}/grant`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to grant platform admin privilege (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function revokePlatformAdmin(userId: string, token: string): Promise<PlatformAdminUser> {
+  const response = await fetch(`${API_BASE_URL}/platform/admins/${userId}/revoke`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to revoke platform admin privilege (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchPlatformAuditLogs(
+  token: string,
+  params?: {
+    limit?: number;
+    offset?: number;
+    action?: string;
+    business_id?: string;
+  }
+): Promise<PlatformAuditLogsResponse> {
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.offset !== undefined) query.set('offset', String(params.offset));
+  if (params?.action) query.set('action', params.action);
+  if (params?.business_id) query.set('business_id', params.business_id);
+
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/platform/audit-logs${queryString}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to fetch platform audit logs (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+
 
 

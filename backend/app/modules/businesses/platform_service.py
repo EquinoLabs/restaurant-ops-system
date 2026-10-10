@@ -12,10 +12,24 @@ from app.modules.businesses.schemas import (
 )
 from app.core.security import hash_password
 from app.core.errors import NotFoundError, ValidationError
+from app.modules.audit.service import log_audit
+
+
+from sqlalchemy import text
 
 
 VALID_SUBSCRIPTION_STATUSES = {"trial", "active", "past_due", "cancelled"}
 VALID_ACCOUNT_STATUSES = {"active", "suspended"}
+ADMIN_PRIVILEGE_LOCK_KEY = 424242111
+
+
+def _acquire_admin_serialization_lock(db: Session) -> None:
+    """
+    Acquires a transaction-scoped advisory lock in PostgreSQL to serialize platform-admin privilege mutations.
+    Safe and ignored in non-PostgreSQL (e.g. SQLite) test environments.
+    """
+    if db.bind and db.bind.dialect.name == "postgresql":
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": ADMIN_PRIVILEGE_LOCK_KEY})
 
 
 def list_platform_businesses(db: Session) -> List[Business]:
@@ -30,7 +44,9 @@ def list_platform_businesses(db: Session) -> List[Business]:
     )
 
 
-def create_platform_business(db: Session, data: PlatformBusinessCreate) -> Business:
+def create_platform_business(
+    db: Session, data: PlatformBusinessCreate, actor_user_id: Optional[uuid.UUID] = None
+) -> Business:
     """
     Provisions a new Business and its primary Outlet in a single transaction.
     Validates public_slug uniqueness.
@@ -70,13 +86,35 @@ def create_platform_business(db: Session, data: PlatformBusinessCreate) -> Busin
         status="active"
     )
     db.add(primary_outlet)
+    db.flush()
+
+    log_audit(
+        db=db,
+        business_id=business.id,
+        outlet_id=primary_outlet.id,
+        actor_user_id=actor_user_id,
+        action="platform.business.create",
+        entity_type="business",
+        entity_id=business.id,
+        metadata_json={
+            "outcome": "success",
+            "name": business.name,
+            "primary_outlet_name": primary_outlet.name,
+            "public_slug": primary_outlet.public_slug,
+            "subscription_status": business.subscription_status,
+            "plan_name": business.plan_name,
+            "max_outlets": business.max_outlets,
+            "trial_ends_at": business.trial_ends_at.isoformat() if business.trial_ends_at else None,
+        }
+    )
+
     db.commit()
     db.refresh(business)
     return business
 
 
 def update_business_subscription(
-    db: Session, business_id: uuid.UUID, data: PlatformSubscriptionUpdate
+    db: Session, business_id: uuid.UUID, data: PlatformSubscriptionUpdate, actor_user_id: Optional[uuid.UUID] = None
 ) -> Business:
     """
     Updates subscription status, account status, plan name, max outlets, and trial end date for a business.
@@ -84,6 +122,14 @@ def update_business_subscription(
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
+
+    before_state = {
+        "status": business.status,
+        "subscription_status": business.subscription_status,
+        "plan_name": business.plan_name,
+        "max_outlets": business.max_outlets,
+        "trial_ends_at": business.trial_ends_at.isoformat() if business.trial_ends_at else None,
+    }
 
     if data.subscription_status is not None:
         if data.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
@@ -110,12 +156,44 @@ def update_business_subscription(
     if data.trial_ends_at is not None:
         business.trial_ends_at = data.trial_ends_at
 
+    after_state = {
+        "status": business.status,
+        "subscription_status": business.subscription_status,
+        "plan_name": business.plan_name,
+        "max_outlets": business.max_outlets,
+        "trial_ends_at": business.trial_ends_at.isoformat() if business.trial_ends_at else None,
+    }
+
+    if before_state["status"] != "suspended" and after_state["status"] == "suspended":
+        action = "platform.business.suspend"
+    elif before_state["status"] == "suspended" and after_state["status"] == "active":
+        action = "platform.business.reactivate"
+    else:
+        action = "platform.business.update_subscription"
+
+    log_audit(
+        db=db,
+        business_id=business.id,
+        outlet_id=None,
+        actor_user_id=actor_user_id,
+        action=action,
+        entity_type="business",
+        entity_id=business.id,
+        metadata_json={
+            "outcome": "success",
+            "before": before_state,
+            "after": after_state,
+        }
+    )
+
     db.commit()
     db.refresh(business)
     return business
 
 
-def add_outlet_to_business(db: Session, business_id: uuid.UUID, data: PlatformOutletCreate) -> Outlet:
+def add_outlet_to_business(
+    db: Session, business_id: uuid.UUID, data: PlatformOutletCreate, actor_user_id: Optional[uuid.UUID] = None
+) -> Outlet:
     """
     Adds a new Outlet to an existing Business, respecting business max_outlets limit.
     """
@@ -145,14 +223,32 @@ def add_outlet_to_business(db: Session, business_id: uuid.UUID, data: PlatformOu
         status="active"
     )
     db.add(outlet)
+    db.flush()
+
+    log_audit(
+        db=db,
+        business_id=business_id,
+        outlet_id=outlet.id,
+        actor_user_id=actor_user_id,
+        action="platform.outlet.create",
+        entity_type="outlet",
+        entity_id=outlet.id,
+        metadata_json={
+            "outcome": "success",
+            "name": outlet.name,
+            "public_slug": outlet.public_slug,
+            "currency": outlet.currency,
+            "timezone": outlet.timezone,
+        }
+    )
+
     db.commit()
     db.refresh(outlet)
     return outlet
 
 
-
 def assign_owner_to_outlet(
-    db: Session, business_id: uuid.UUID, data: PlatformAssignOwner
+    db: Session, business_id: uuid.UUID, data: PlatformAssignOwner, actor_user_id: Optional[uuid.UUID] = None
 ) -> OutletMembership:
     """
     Creates or assigns a User as an 'owner' for a specific Outlet under a Business.
@@ -165,6 +261,7 @@ def assign_owner_to_outlet(
         raise NotFoundError(f"Outlet with ID '{data.outlet_id}' not found under business '{business_id}'.")
 
     user: Optional[User] = None
+    created_new_user = False
 
     if data.user_id:
         user = db.query(User).filter(User.id == data.user_id).first()
@@ -185,6 +282,7 @@ def assign_owner_to_outlet(
             )
             db.add(user)
             db.flush()
+            created_new_user = True
     else:
         raise ValidationError("Either user_id or email must be provided to assign an owner.")
 
@@ -203,6 +301,123 @@ def assign_owner_to_outlet(
         )
         db.add(membership)
 
+    db.flush()
+
+    log_audit(
+        db=db,
+        business_id=business_id,
+        outlet_id=outlet.id,
+        actor_user_id=actor_user_id,
+        action="platform.owner.assign",
+        entity_type="membership",
+        entity_id=membership.id,
+        metadata_json={
+            "outcome": "success",
+            "assigned_user_id": str(user.id),
+            "email": user.email,
+            "role": "owner",
+            "created_new_user": created_new_user,
+        }
+    )
+
     db.commit()
     db.refresh(membership)
     return membership
+
+
+def list_platform_admins(db: Session) -> List[User]:
+    """
+    Returns all users with platform administrator privileges.
+    """
+    return (
+        db.query(User)
+        .filter(User.is_platform_admin == True)
+        .order_by(User.created_at.asc())
+        .all()
+    )
+
+
+def grant_platform_admin(
+    db: Session, target_user_id: uuid.UUID, actor_user_id: Optional[uuid.UUID] = None
+) -> User:
+    """
+    Grants platform administrator privileges to an existing user.
+    """
+    _acquire_admin_serialization_lock(db)
+
+    user = db.query(User).filter(User.id == target_user_id).first()
+    if not user:
+        raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    if user.is_platform_admin:
+        return user
+
+    user.is_platform_admin = True
+    db.flush()
+
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor_user_id,
+        action="platform.admin.grant",
+        entity_type="user",
+        entity_id=user.id,
+        metadata_json={
+            "outcome": "success",
+            "target_user_id": str(user.id),
+            "target_email": user.email,
+        }
+    )
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def revoke_platform_admin(
+    db: Session, target_user_id: uuid.UUID, actor_user_id: Optional[uuid.UUID] = None
+) -> User:
+    """
+    Revokes platform administrator privileges from a user, with concurrency-safe last-admin protection.
+    """
+    _acquire_admin_serialization_lock(db)
+
+    user = db.query(User).filter(User.id == target_user_id).first()
+    if not user:
+        raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    if not user.is_platform_admin:
+        return user
+
+    if user.status == "active":
+        active_admins = (
+            db.query(User)
+            .filter(User.is_platform_admin == True, User.status == "active")
+            .order_by(User.id.asc())
+            .all()
+        )
+        if len(active_admins) <= 1:
+            raise ValidationError("Cannot revoke platform admin privileges from the last active platform administrator.")
+
+    user.is_platform_admin = False
+    db.flush()
+
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor_user_id,
+        action="platform.admin.revoke",
+        entity_type="user",
+        entity_id=user.id,
+        metadata_json={
+            "outcome": "success",
+            "target_user_id": str(user.id),
+            "target_email": user.email,
+        }
+    )
+
+    db.commit()
+    db.refresh(user)
+    return user

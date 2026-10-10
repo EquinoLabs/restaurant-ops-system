@@ -15,10 +15,10 @@ if TYPE_CHECKING:
 class AuditLog(Base, TimestampMixin):
     __tablename__ = "audit_logs"
 
-    business_id: Mapped[uuid.UUID] = mapped_column(
+    business_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("businesses.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True
     )
     outlet_id: Mapped[Optional[uuid.UUID]] = mapped_column(

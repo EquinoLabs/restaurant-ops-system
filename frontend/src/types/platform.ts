@@ -64,3 +64,38 @@ export interface PlatformAssignOwnerPayload {
   password?: string;
   display_name?: string;
 }
+
+export interface PlatformAdminUser {
+  id: string;
+  email: string;
+  display_name: string;
+  status: string;
+  is_platform_admin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformAuditLogItem {
+  id: string;
+  business_id: string | null;
+  business_name: string | null;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  actor_user_id: string | null;
+  actor_display_name: string | null;
+  actor_email: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  metadata_json: Record<string, any> | null;
+  created_at: string;
+}
+
+export interface PlatformAuditLogsResponse {
+  items: PlatformAuditLogItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+

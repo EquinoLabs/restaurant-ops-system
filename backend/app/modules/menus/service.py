@@ -20,7 +20,7 @@ def get_public_menu_by_slug(db: Session, public_slug: str) -> PublicOutletMenuRe
         Outlet.status == "active"
     )
     outlet = db.scalar(stmt)
-    if not outlet:
+    if not outlet or not outlet.business or outlet.business.status != "active":
         raise NotFoundException(
             code="OUTLET_NOT_FOUND",
             message=f"Outlet with slug '{public_slug}' was not found or is inactive."
@@ -82,7 +82,7 @@ def generate_outlet_qr_code(db: Session, public_slug: str, base_url: str = "http
         Outlet.status == "active"
     )
     outlet = db.scalar(stmt)
-    if not outlet:
+    if not outlet or not outlet.business or outlet.business.status != "active":
         raise NotFoundException(
             code="OUTLET_NOT_FOUND",
             message=f"Outlet with slug '{public_slug}' was not found or is inactive."

@@ -131,6 +131,13 @@ export const StaffOrdersView: React.FC = () => {
 
           <div className="flex items-center space-x-3">
             <Link
+              to="/admin/kds"
+              className="flex items-center space-x-1 px-3 py-1.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 text-xs font-bold transition-colors"
+            >
+              <span>Kitchen Board</span>
+            </Link>
+
+            <Link
               to="/admin/menu"
               className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors"
             >

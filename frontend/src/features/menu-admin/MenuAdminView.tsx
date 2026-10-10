@@ -217,6 +217,13 @@ export const MenuAdminView: React.FC = () => {
               <span>POS Orders</span>
             </Link>
 
+            <Link
+              to="/admin/kds"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors"
+            >
+              <span>KDS Board</span>
+            </Link>
+
 
             <button
               onClick={handleOpenAuditPanel}

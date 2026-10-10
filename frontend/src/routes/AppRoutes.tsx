@@ -7,6 +7,7 @@ import { PlatformLoginForm } from '../features/authentication/PlatformLoginForm'
 import { MenuAdminView } from '../features/menu-admin/MenuAdminView';
 import { StaffOrdersView } from '../features/staff-orders/StaffOrdersView';
 import { PlatformAdminView } from '../features/platform-admin/PlatformAdminView';
+import { KDSView } from '../features/kds/KDSView';
 import { ProtectedRoute } from './ProtectedRoute';
 import { RequirePlatformAdmin } from './RequirePlatformAdmin';
 
@@ -21,9 +22,16 @@ export const AppRoutes: React.FC = () => {
       <Route path="/pf-login" element={<PlatformLoginForm />} />
       <Route path="/platform/login" element={<PlatformLoginForm />} />
 
-
       {/* Platform Control Plane Routes */}
       <Route path="/platform-admin.html" element={<Navigate to="/platform" replace />} />
+      <Route
+        path="/platform/*"
+        element={
+          <RequirePlatformAdmin>
+            <PlatformAdminView />
+          </RequirePlatformAdmin>
+        }
+      />
       <Route
         path="/platform"
         element={
@@ -33,7 +41,6 @@ export const AppRoutes: React.FC = () => {
         }
       />
 
-
       {/* Staff POS Order Management Routes */}
       <Route path="/staff" element={<Navigate to="/staff/orders" replace />} />
       <Route
@@ -41,6 +48,16 @@ export const AppRoutes: React.FC = () => {
         element={
           <ProtectedRoute>
             <StaffOrdersView />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* Kitchen Display System Route */}
+      <Route
+        path="/admin/kds"
+        element={
+          <ProtectedRoute>
+            <KDSView />
           </ProtectedRoute>
         }
       />
@@ -55,7 +72,6 @@ export const AppRoutes: React.FC = () => {
           </ProtectedRoute>
         }
       />
-
 
       {/* Unmapped URL 404 Page */}
       <Route

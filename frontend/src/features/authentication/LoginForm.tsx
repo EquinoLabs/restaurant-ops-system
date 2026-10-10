@@ -21,12 +21,8 @@ export const LoginForm: React.FC = () => {
 
     try {
       setIsSubmitting(true);
-      const userProfile = await login(email, password);
-      if (userProfile.is_platform_admin) {
-        navigate('/platform');
-      } else {
-        navigate('/admin/menu');
-      }
+      await login(email, password);
+      navigate('/admin/menu');
     } catch (err: any) {
       setError(err.message || 'Login failed. Please check credentials.');
     } finally {

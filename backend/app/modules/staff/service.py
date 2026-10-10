@@ -2,6 +2,7 @@ import uuid
 from typing import Optional, List
 from sqlalchemy.orm import Session, joinedload
 from app.modules.staff.models import User, OutletMembership
+from app.modules.outlets.models import Outlet
 from app.modules.staff.schemas import UserMeOut, OutletMembershipOut
 from app.core.security import verify_password, hash_password
 from app.core.errors import AuthenticationError, NotFoundError
@@ -32,6 +33,7 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
         .options(
             joinedload(User.memberships)
             .joinedload(OutletMembership.outlet)
+            .joinedload(Outlet.business)
         )
         .filter(User.id == user_id)
         .first()
@@ -41,7 +43,7 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
 
     memberships_out = []
     for mem in user.memberships:
-        if mem.outlet and mem.outlet.status == "active":
+        if mem.outlet and mem.outlet.status == "active" and mem.outlet.business and mem.outlet.business.status == "active":
             memberships_out.append(
                 OutletMembershipOut(
                     outlet_id=mem.outlet.id,

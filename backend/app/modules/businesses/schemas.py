@@ -81,3 +81,15 @@ class PlatformAssignOwner(BaseModel):
     password: Optional[str] = None
     display_name: Optional[str] = None
 
+
+class PlatformAdminUserOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    display_name: str
+    status: str
+    is_platform_admin: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+

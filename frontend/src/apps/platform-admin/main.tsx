@@ -20,6 +20,14 @@ export const PlatformAdminApp: React.FC = () => {
           <Route path="/platform-admin.html" element={<Navigate to="/platform" replace />} />
 
           <Route
+            path="/platform/*"
+            element={
+              <RequirePlatformAdmin>
+                <PlatformAdminView />
+              </RequirePlatformAdmin>
+            }
+          />
+          <Route
             path="/platform"
             element={
               <RequirePlatformAdmin>

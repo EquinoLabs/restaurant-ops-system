@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../authentication/AuthContext';
+import { PlatformShell, PlatformTab } from './PlatformShell';
+import { DashboardOverview } from './DashboardOverview';
+import { BusinessDirectory } from './BusinessDirectory';
+import { SubscriptionsOverview } from './SubscriptionsOverview';
+import { PlatformAdminManagement } from './PlatformAdminManagement';
+import { PlatformAuditLogs } from './PlatformAuditLogs';
 import {
   PlatformBusiness,
   PlatformOutlet,
@@ -18,8 +24,36 @@ import {
 } from '../../api/client';
 
 export const PlatformAdminView: React.FC = () => {
-  const { token, user, logout } = useAuth();
+  const { token } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
+
+  // Active tab state derived from URL or default to 'dashboard'
+  const getTabFromPath = (path: string): PlatformTab => {
+    if (path.includes('/platform/businesses')) return 'businesses';
+    if (path.includes('/platform/subscriptions')) return 'subscriptions';
+    if (path.includes('/platform/admins')) return 'admins';
+    if (path.includes('/platform/audit-logs')) return 'audit-logs';
+    return 'dashboard';
+  };
+
+  const [activeTab, setActiveTabState] = useState<PlatformTab>(() => getTabFromPath(location.pathname));
+
+  useEffect(() => {
+    const currentTab = getTabFromPath(location.pathname);
+    if (currentTab !== activeTab) {
+      setActiveTabState(currentTab);
+    }
+  }, [location.pathname]);
+
+  const handleTabChange = (tab: PlatformTab) => {
+    setActiveTabState(tab);
+    if (tab === 'dashboard') {
+      navigate('/platform/dashboard');
+    } else {
+      navigate(`/platform/${tab}`);
+    }
+  };
 
   const [businesses, setBusinesses] = useState<PlatformBusiness[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -241,247 +275,58 @@ export const PlatformAdminView: React.FC = () => {
     }
   };
 
-  const totalOutlets = businesses.reduce((acc, b) => acc + (b.outlets?.length || 0), 0);
-  const activeSubscriptions = businesses.filter(b => b.subscription_status === 'active').length;
-
-  const renderSubscriptionBadge = (subStatus: string) => {
-    switch (subStatus) {
-      case 'active':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">Active Sub</span>;
-      case 'past_due':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">Past Due</span>;
-      case 'cancelled':
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 uppercase">Cancelled</span>;
-      case 'trial':
-      default:
-        return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30 uppercase">Trial</span>;
-    }
-  };
-
-  const renderAccountBadge = (status: string) => {
-    if (status === 'suspended') {
-      return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase">Suspended</span>;
-    }
-    return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">Active</span>;
-  };
-
-  if (loading && businesses.length === 0) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center text-slate-300">
-        <div className="flex flex-col items-center space-y-4">
-          <div className="w-12 h-12 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
-          <p className="text-sm font-semibold">Loading Platform Control Plane...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-16">
-      {/* Platform Header */}
-      <header className="sticky top-0 z-40 bg-slate-900/90 backdrop-blur-md border-b border-slate-800">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400 font-black text-sm">
-              ROMS
-            </div>
-            <div>
-              <span className="font-extrabold text-white text-base tracking-tight">SaaS Control Plane</span>
-              <span className="ml-2 text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-md uppercase">
-                Platform Admin
-              </span>
-            </div>
-          </div>
+    <PlatformShell activeTab={activeTab} onTabChange={handleTabChange}>
+      {/* Tab Content Rendering */}
+      {activeTab === 'dashboard' && (
+        <DashboardOverview
+          businesses={businesses}
+          loading={loading}
+          error={error}
+          onRetry={loadBusinesses}
+          onNavigateTab={handleTabChange}
+          onOpenProvisionModal={() => setIsBizModalOpen(true)}
+        />
+      )}
 
-          <div className="flex items-center space-x-4">
-            <Link
-              to="/admin/menu"
-              className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors"
-            >
-              Go to Business Admin
-            </Link>
+      {activeTab === 'businesses' && (
+        <BusinessDirectory
+          businesses={businesses}
+          loading={loading}
+          error={error}
+          successMessage={successMessage}
+          onRetry={loadBusinesses}
+          onOpenProvisionModal={() => setIsBizModalOpen(true)}
+          onOpenSubscriptionModal={handleOpenSubscriptionModal}
+          onOpenOutletModal={(biz) => {
+            setSelectedBizForOutlet(biz);
+            setIsOutletModalOpen(true);
+          }}
+          onOpenOwnerModal={(bizId, outlet) => {
+            setSelectedOutletForOwner({ bizId, outlet });
+            setIsOwnerModalOpen(true);
+          }}
+        />
+      )}
 
-            <div className="h-4 w-px bg-slate-800"></div>
+      {activeTab === 'subscriptions' && (
+        <SubscriptionsOverview
+          businesses={businesses}
+          loading={loading}
+          error={error}
+          onRetry={loadBusinesses}
+          onUpdateSubscription={loadBusinesses}
+          token={token}
+        />
+      )}
 
-            <div className="text-right hidden sm:block">
-              <div className="text-xs font-bold text-white">{user?.display_name}</div>
-              <div className="text-[10px] text-slate-400">{user?.email}</div>
-            </div>
+      {activeTab === 'admins' && (
+        <PlatformAdminManagement token={token} />
+      )}
 
-            <button
-              onClick={() => {
-                logout();
-                navigate('/login');
-              }}
-              className="p-2 rounded-xl text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
-              title="Sign Out"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
-        {error && (
-          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium">
-            {error}
-          </div>
-        )}
-
-        {successMessage && (
-          <div className="mb-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium">
-            {successMessage}
-          </div>
-        )}
-
-        {/* Overview Stats Bar */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-8">
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-xs font-semibold uppercase text-slate-400">Total Businesses</p>
-            <p className="text-3xl font-black text-white mt-1">{businesses.length}</p>
-          </div>
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-xs font-semibold uppercase text-slate-400">Active Outlets</p>
-            <p className="text-3xl font-black text-indigo-400 mt-1">{totalOutlets}</p>
-          </div>
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl">
-            <p className="text-xs font-semibold uppercase text-slate-400">Active Subscriptions</p>
-            <p className="text-3xl font-black text-emerald-400 mt-1">{activeSubscriptions}</p>
-          </div>
-          <div className="bg-slate-900/80 border border-slate-800 p-5 rounded-2xl flex items-center justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase text-slate-400">Platform Status</p>
-              <p className="text-sm font-bold text-emerald-400 mt-1">● Operational</p>
-            </div>
-            <button
-              onClick={() => setIsBizModalOpen(true)}
-              className="px-4 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center space-x-1.5"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-              </svg>
-              <span>Provision Business</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Directory Section Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div>
-            <h2 className="text-lg font-bold text-white">Cross-Tenant Business Directory</h2>
-            <p className="text-xs text-slate-400">Manage SaaS client accounts, subscription plans, outlet limits, and owner assignments</p>
-          </div>
-        </div>
-
-        {/* Business Directory Cards */}
-        <div className="mt-6 space-y-6">
-          {businesses.map((biz) => {
-            const currentOutletCount = biz.outlets?.length || 0;
-            const maxOutlets = biz.max_outlets;
-            const isLimitReached = maxOutlets !== null && maxOutlets !== undefined && currentOutletCount >= maxOutlets;
-
-            return (
-              <div key={biz.id} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <h3 className="text-base font-bold text-white">{biz.name}</h3>
-                    {renderAccountBadge(biz.status)}
-                    {renderSubscriptionBadge(biz.subscription_status)}
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 capitalize">
-                      {biz.plan_name ? `${biz.plan_name} Plan` : 'No Plan Set'}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold border uppercase ${
-                      isLimitReached
-                        ? 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                        : 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
-                    }`}>
-                      {currentOutletCount} / {maxOutlets !== null && maxOutlets !== undefined ? `${maxOutlets} Outlets` : '∞ Outlets'}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center space-x-2 self-start lg:self-auto">
-                    <button
-                      onClick={() => handleOpenSubscriptionModal(biz)}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold transition-colors flex items-center space-x-1"
-                    >
-                      <svg className="w-3.5 h-3.5 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                      <span>Edit Plan & Subscription</span>
-                    </button>
-
-                    <button
-                      disabled={isLimitReached}
-                      onClick={() => {
-                        setSelectedBizForOutlet(biz);
-                        setIsOutletModalOpen(true);
-                      }}
-                      title={isLimitReached ? `Cannot add outlet. Limit of ${maxOutlets} reached.` : 'Add Outlet'}
-                      className={`px-3 py-1.5 rounded-xl border text-xs font-semibold transition-colors flex items-center space-x-1 ${
-                        isLimitReached
-                          ? 'bg-slate-800/40 text-slate-500 border-slate-800 cursor-not-allowed'
-                          : 'bg-slate-800 hover:bg-slate-700 text-indigo-400 border-slate-700'
-                      }`}
-                    >
-                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-                      </svg>
-                      <span>Add Outlet</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Outlets Grid */}
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {biz.outlets?.map((outlet) => (
-                    <div key={outlet.id} className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-sm font-bold text-white">{outlet.name}</h4>
-                          <span className="text-[10px] font-mono text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                            /m/{outlet.public_slug}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-xs text-slate-400">
-                          {outlet.address || 'No physical address specified'} • {outlet.currency} ({outlet.timezone})
-                        </p>
-                      </div>
-
-                      <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
-                        <a
-                          href={`/m/${outlet.public_slug}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs font-semibold text-emerald-400 hover:underline flex items-center space-x-1"
-                        >
-                          <span>Preview Live Menu</span>
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                          </svg>
-                        </a>
-
-                        <button
-                          onClick={() => {
-                            setSelectedOutletForOwner({ bizId: biz.id, outlet });
-                            setIsOwnerModalOpen(true);
-                          }}
-                          className="px-2.5 py-1 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-xs font-semibold transition-colors"
-                        >
-                          Assign Owner
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </main>
+      {activeTab === 'audit-logs' && (
+        <PlatformAuditLogs token={token} businesses={businesses} />
+      )}
 
       {/* Edit Subscription & Status Modal */}
       {isSubModalOpen && selectedBizForSub && (
@@ -799,6 +644,6 @@ export const PlatformAdminView: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </PlatformShell>
   );
 };

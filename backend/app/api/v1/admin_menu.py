@@ -35,6 +35,8 @@ def _verify_item_membership(db: Session, item_id: uuid.UUID, user_id: uuid.UUID,
     ).first()
     if not membership:
         raise ForbiddenError("You do not have access to this outlet")
+    if not membership.outlet or not membership.outlet.business or membership.outlet.business.status != "active":
+        raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
     if allowed_roles and membership.role not in allowed_roles:
         raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
     return item
@@ -50,6 +52,8 @@ def _verify_category_membership(db: Session, category_id: uuid.UUID, user_id: uu
     ).first()
     if not membership:
         raise ForbiddenError("You do not have access to this outlet")
+    if not membership.outlet or not membership.outlet.business or membership.outlet.business.status != "active":
+        raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
     if allowed_roles and membership.role not in allowed_roles:
         raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
     return cat
