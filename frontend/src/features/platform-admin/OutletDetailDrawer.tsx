@@ -1,5 +1,6 @@
-import React, { useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PlatformBusiness, PlatformOutlet } from '../../types/platform';
+import { EffectiveEntitlementsTab } from './EffectiveEntitlementsTab';
 
 export interface OutletDetailDrawerProps {
   business: PlatformBusiness | null;
@@ -18,6 +19,8 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
   onEditSubscription,
   onAssignOwner,
 }) => {
+  const [activeTab, setActiveTab] = useState<'outlets' | 'entitlements'>('outlets');
+
   // Close drawer on Escape key press
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -68,33 +71,64 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
       {/* Drawer Container */}
       <div className="relative w-full max-w-2xl bg-slate-900 border-l border-slate-800 shadow-2xl h-full flex flex-col z-10 text-slate-100 overflow-y-auto">
         {/* Drawer Header */}
-        <div className="p-6 border-b border-slate-800 flex items-start justify-between sticky top-0 bg-slate-900/95 backdrop-blur-md z-20">
-          <div>
-            <div className="flex flex-wrap items-center gap-2 mb-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                Tenant Detail Drawer
-              </span>
-              {renderAccountBadge(business.status)}
-              {renderSubscriptionBadge(business.subscription_status)}
+        <div className="p-6 border-b border-slate-800 sticky top-0 bg-slate-900/95 backdrop-blur-md z-20 space-y-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
+                  Tenant Detail Drawer
+                </span>
+                {renderAccountBadge(business.status)}
+                {renderSubscriptionBadge(business.subscription_status)}
+              </div>
+              <h2 className="text-xl font-black text-white tracking-tight">{business.name}</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Registered ID: <span className="font-mono text-slate-300">{business.id}</span>
+              </p>
             </div>
-            <h2 className="text-xl font-black text-white tracking-tight">{business.name}</h2>
-            <p className="text-xs text-slate-400 mt-1">
-              Registered ID: <span className="font-mono text-slate-300">{business.id}</span>
-            </p>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+              aria-label="Close Outlet Detail Drawer"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            aria-label="Close Outlet Detail Drawer"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+
+          {/* Navigation Tabs */}
+          <div className="flex items-center space-x-2 border-b border-slate-800/80 pb-1">
+            <button
+              onClick={() => setActiveTab('outlets')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                activeTab === 'outlets'
+                  ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              Outlets & Overview
+            </button>
+            <button
+              onClick={() => setActiveTab('entitlements')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                activeTab === 'entitlements'
+                  ? 'bg-indigo-500 text-white shadow-md shadow-indigo-500/20'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+              }`}
+            >
+              Effective Entitlements & Overrides
+            </button>
+          </div>
         </div>
 
         {/* Drawer Content */}
         <div className="p-6 space-y-6 flex-1">
+          {activeTab === 'entitlements' ? (
+            <EffectiveEntitlementsTab business={business} />
+          ) : (
+            <>
+
           {/* Tenant Business Summary Grid */}
           <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
             <div>
@@ -250,6 +284,8 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
                 </div>
               ))}
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

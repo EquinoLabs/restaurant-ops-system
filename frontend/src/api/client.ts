@@ -18,6 +18,11 @@ import {
   PlatformAssignOwnerPayload,
   PlatformAdminUser,
   PlatformAuditLogsResponse,
+  PlatformBusinessEntitlementsResponse,
+  PlatformBusinessOverridesResponse,
+  PlatformOverrideCreatePayload,
+  PlatformOverrideRevokePayload,
+  PlatformOverrideInspectionItem,
 } from '../types/platform';
 
 
@@ -577,6 +582,117 @@ export async function fetchPlatformAuditLogs(
 
   return response.json();
 }
+
+export async function fetchBusinessEntitlements(
+  token: string,
+  businessId: string,
+  outletId?: string
+): Promise<PlatformBusinessEntitlementsResponse> {
+  const query = new URLSearchParams();
+  if (outletId) query.set('outlet_id', outletId);
+
+  const queryString = query.toString() ? `?${query.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/entitlements${queryString}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to fetch business entitlements (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchBusinessOverrides(
+  token: string,
+  businessId: string,
+  includeExpired: boolean = true,
+  includeRevoked: boolean = true
+): Promise<PlatformBusinessOverridesResponse> {
+  const query = new URLSearchParams();
+  query.set('include_expired', String(includeExpired));
+  query.set('include_revoked', String(includeRevoked));
+
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/overrides?${query.toString()}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to fetch business overrides (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function createBusinessOverride(
+  token: string,
+  businessId: string,
+  payload: PlatformOverrideCreatePayload
+): Promise<PlatformOverrideInspectionItem> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/overrides`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to create entitlement override (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function revokeBusinessOverride(
+  token: string,
+  businessId: string,
+  overrideId: string,
+  reason: string
+): Promise<{ status: string; message: string }> {
+  const payload: PlatformOverrideRevokePayload = { reason };
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/overrides/${overrideId}`, {
+    method: 'DELETE',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to revoke entitlement override (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+
 
 
 

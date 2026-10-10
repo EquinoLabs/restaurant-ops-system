@@ -98,4 +98,89 @@ export interface PlatformAuditLogsResponse {
   offset: number;
 }
 
+export interface PlatformSubscriptionSummary {
+  id: string | null;
+  status: string;
+  resolved_status: string;
+  plan_code: string;
+  plan_name: string;
+  plan_is_active: boolean;
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  cancelled_at: string | null;
+}
+
+export interface PlatformFeatureInspectionItem {
+  feature_code: string;
+  feature_name: string;
+  category: string;
+  authorized: boolean;
+  limit_value: number | null;
+  limit_type: 'none' | 'numeric' | 'unlimited';
+  reason: string;
+  source: string;
+  scope: string;
+}
+
+export interface PlatformBusinessEntitlementsResponse {
+  business_id: string;
+  business_name: string;
+  business_status: string;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  subscription: PlatformSubscriptionSummary;
+  features: PlatformFeatureInspectionItem[];
+}
+
+export interface PlatformOverrideInspectionItem {
+  id: string;
+  business_id: string;
+  outlet_id: string | null;
+  outlet_name: string | null;
+  feature_code: string;
+  feature_name: string;
+  override_type: 'grant' | 'restrict';
+  limit_value: number | null;
+  reason: string | null;
+  expires_at: string | null;
+  is_active: boolean;
+  created_by_user_id: string | null;
+  created_by_email: string | null;
+  created_at: string;
+}
+
+export interface PlatformRevocationAuditItem {
+  audit_log_id: string;
+  revoked_override_id: string | null;
+  feature_code: string | null;
+  override_type: string | null;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  revoked_at: string;
+  reason: string | null;
+}
+
+export interface PlatformBusinessOverridesResponse {
+  business_id: string;
+  overrides: PlatformOverrideInspectionItem[];
+  revocation_history: PlatformRevocationAuditItem[];
+}
+
+export interface PlatformOverrideCreatePayload {
+  feature_code: string;
+  override_type: 'grant' | 'restrict';
+  outlet_id?: string | null;
+  limit_value?: number | null;
+  reason: string;
+  expires_at?: string | null;
+}
+
+export interface PlatformOverrideRevokePayload {
+  reason: string;
+}
+
+
+
 

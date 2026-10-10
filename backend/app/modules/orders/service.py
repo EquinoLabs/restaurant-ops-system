@@ -1,15 +1,19 @@
 import uuid
+import json
+import hashlib
 from decimal import Decimal
 from datetime import datetime, timezone
 from typing import List, Optional
 from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.exc import IntegrityError
 
-from app.modules.orders.models import Order, OrderItem
+from app.modules.orders.models import Order, OrderItem, OrderIdempotencyKey
 from app.modules.tables.models import DiningTable
 from app.modules.menus.models import MenuItem
 from app.modules.outlets.models import Outlet
-from app.modules.orders.schemas import OrderCreate, OrderOut, OrderItemOut
-from app.core.errors import NotFoundError, ValidationError
+from app.modules.orders.schemas import OrderCreate, OrderOut, OrderItemOut, PublicOrderCreate
+from app.core.errors import NotFoundError, NotFoundException, ValidationError, BusinessRuleException, APIException
+
 
 
 def generate_order_number(db: Session, outlet_id: uuid.UUID) -> str:
@@ -213,3 +217,255 @@ def serialize_order(order: Order) -> OrderOut:
         created_at=order.created_at,
         updated_at=order.updated_at
     )
+
+
+def compute_request_hash(data: PublicOrderCreate) -> str:
+    sorted_items = sorted(data.items, key=lambda i: str(i.menu_item_id))
+    normalized_items = [
+        {
+            "menu_item_id": str(item.menu_item_id),
+            "quantity": item.quantity,
+            "special_instructions": item.special_instructions.strip() if item.special_instructions else None
+        }
+        for item in sorted_items
+    ]
+    normalized = {
+        "table_number": data.table_number.strip() if data.table_number else None,
+        "order_type": data.order_type.strip().lower() if data.order_type else None,
+        "notes": data.notes.strip() if data.notes else None,
+        "items": normalized_items
+    }
+    canonical_json = json.dumps(normalized, sort_keys=True)
+    return hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+
+
+def create_public_order(
+    db: Session,
+    public_slug: str,
+    data: PublicOrderCreate,
+    idempotency_key_header: Optional[str] = None
+) -> Order:
+    # 1. Resolve and validate idempotency key consistency
+    header_key = (idempotency_key_header or "").strip()
+    body_key = (data.idempotency_key or "").strip()
+
+    if header_key and body_key and header_key != body_key:
+        raise BusinessRuleException(
+            code="IDEMPOTENCY_KEY_MISMATCH",
+            message="Conflicting idempotency keys provided in header and payload."
+        )
+
+    idempotency_key = header_key or body_key or None
+
+    # 2. Resolve active Outlet & Business
+    outlet = (
+        db.query(Outlet)
+        .filter(Outlet.public_slug == public_slug, Outlet.status == "active")
+        .first()
+    )
+    if not outlet or not outlet.business or outlet.business.status != "active":
+        raise NotFoundException(
+            code="OUTLET_NOT_FOUND",
+            message=f"Outlet with slug '{public_slug}' was not found or is inactive."
+        )
+
+    request_hash = compute_request_hash(data)
+
+    # 3. Check idempotency key if provided
+    if idempotency_key:
+        existing_idemp = (
+            db.query(OrderIdempotencyKey)
+            .filter(
+                OrderIdempotencyKey.outlet_id == outlet.id,
+                OrderIdempotencyKey.idempotency_key == idempotency_key
+            )
+            .first()
+        )
+        if existing_idemp:
+            if existing_idemp.request_hash == request_hash:
+                return get_order_by_id(db, existing_idemp.order_id)
+            else:
+                raise APIException(
+                    status_code=409,
+                    code="IDEMPOTENCY_CONFLICT",
+                    message="Idempotency key reused with a different payload"
+                )
+
+    # 4. Validate Table if table_number provided
+    table = None
+    if data.table_number and data.table_number.strip():
+        table_num = data.table_number.strip()
+        table = (
+            db.query(DiningTable)
+            .filter(
+                DiningTable.outlet_id == outlet.id,
+                DiningTable.table_number == table_num
+            )
+            .first()
+        )
+        if not table:
+            raise BusinessRuleException(
+                code="INVALID_TABLE",
+                message=f"Table '{table_num}' was not found in this outlet."
+            )
+
+    # 5. Determine order_type
+    order_type = "dine_in" if table else "takeaway"
+    if data.order_type and data.order_type.strip():
+        req_type = data.order_type.strip().lower()
+        if req_type not in ["dine_in", "takeaway", "delivery"]:
+            raise ValidationError(
+                code="INVALID_ORDER_TYPE",
+                message=f"Invalid order type '{req_type}'. Allowed: dine_in, takeaway, delivery"
+            )
+        order_type = req_type
+
+    # 6. Validate items and combine duplicates
+    if not data.items:
+        raise ValidationError(code="VALIDATION_ERROR", message="Order must contain at least one item")
+
+    item_quantities = {}
+    item_instructions = {}
+    for req_item in data.items:
+        item_id = req_item.menu_item_id
+        if req_item.quantity <= 0:
+            raise ValidationError(code="INVALID_QUANTITY", message="Item quantity must be at least 1")
+        item_quantities[item_id] = item_quantities.get(item_id, 0) + req_item.quantity
+        if item_quantities[item_id] > 99:
+            raise ValidationError(code="EXCESSIVE_QUANTITY", message="Item quantity cannot exceed 99")
+        if req_item.special_instructions and req_item.special_instructions.strip():
+            inst = req_item.special_instructions.strip()
+            if item_id in item_instructions and item_instructions[item_id]:
+                item_instructions[item_id] += f"; {inst}"
+            else:
+                item_instructions[item_id] = inst
+
+    validated_items = []
+    total_amount = Decimal("0.00")
+
+    for item_id, qty in item_quantities.items():
+        menu_item = (
+            db.query(MenuItem)
+            .filter(MenuItem.id == item_id, MenuItem.outlet_id == outlet.id)
+            .first()
+        )
+        if not menu_item:
+            raise BusinessRuleException(
+                code="INVALID_MENU_ITEM",
+                message=f"Menu item with ID '{item_id}' not found in this outlet."
+            )
+        if not menu_item.is_active or not menu_item.is_available:
+            raise BusinessRuleException(
+                code="ITEM_UNAVAILABLE",
+                message=f"Menu item '{menu_item.name}' is currently unavailable for ordering."
+            )
+
+        unit_price = menu_item.price
+        subtotal = unit_price * Decimal(qty)
+        total_amount += subtotal
+
+        validated_items.append({
+            "menu_item": menu_item,
+            "unit_price": unit_price,
+            "quantity": qty,
+            "subtotal": subtotal,
+            "special_instructions": item_instructions.get(item_id)
+        })
+
+    # 7. Create Order & Items atomically with targeted collision recovery
+    max_retries = 3
+    created_order_id = None
+
+    for attempt in range(max_retries):
+        try:
+            if attempt == 0:
+                order_number = generate_order_number(db, outlet_id=outlet.id)
+            else:
+                now = datetime.now(timezone.utc)
+                date_str = now.strftime("%Y%m%d")
+                count = (
+                    db.query(Order)
+                    .filter(
+                        Order.outlet_id == outlet.id,
+                        Order.created_at >= datetime(now.year, now.month, now.day, tzinfo=timezone.utc)
+                    )
+                    .count()
+                )
+                order_number = f"ORD-{date_str}-{(count + 1 + attempt):03d}"
+
+            order = Order(
+                outlet_id=outlet.id,
+                table_id=table.id if table else None,
+                waiter_user_id=None,
+                order_number=order_number,
+                status="pending",
+                order_type=order_type,
+                total_amount=total_amount,
+                notes=data.notes.strip() if data.notes else None
+            )
+            db.add(order)
+            db.flush()
+
+            for v_item in validated_items:
+                order_item = OrderItem(
+                    order_id=order.id,
+                    menu_item_id=v_item["menu_item"].id,
+                    item_name=v_item["menu_item"].name,
+                    unit_price=v_item["unit_price"],
+                    quantity=v_item["quantity"],
+                    subtotal=v_item["subtotal"],
+                    special_instructions=v_item["special_instructions"]
+                )
+                db.add(order_item)
+
+            if table and order_type == "dine_in":
+                table.status = "occupied"
+
+            if idempotency_key:
+                idemp = OrderIdempotencyKey(
+                    outlet_id=outlet.id,
+                    idempotency_key=idempotency_key,
+                    order_id=order.id,
+                    request_hash=request_hash
+                )
+                db.add(idemp)
+
+            db.commit()
+            created_order_id = order.id
+            break
+        except IntegrityError as ie:
+            db.rollback()
+            err_str = str(ie.orig) if hasattr(ie, 'orig') else str(ie)
+
+            # Check if it was an order_number uniqueness collision
+            if "uq_outlet_order_number" in err_str or "orders.outlet_id, orders.order_number" in err_str or "orders.order_number" in err_str:
+                if attempt < max_retries - 1:
+                    continue
+
+            # Check if it was an idempotency key conflict
+            if idempotency_key:
+                existing_key = (
+                    db.query(OrderIdempotencyKey)
+                    .filter(
+                        OrderIdempotencyKey.outlet_id == outlet.id,
+                        OrderIdempotencyKey.idempotency_key == idempotency_key
+                    )
+                    .first()
+                )
+                if existing_key:
+                    if existing_key.request_hash == request_hash:
+                        return get_order_by_id(db, existing_key.order_id)
+                    else:
+                        raise APIException(
+                            status_code=409,
+                            code="IDEMPOTENCY_CONFLICT",
+                            message="Idempotency key reused with a different payload"
+                        )
+            raise ie
+        except Exception as e:
+            db.rollback()
+            raise e
+
+    return get_order_by_id(db, created_order_id)
+
+

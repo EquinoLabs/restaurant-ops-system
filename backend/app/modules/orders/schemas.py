@@ -2,7 +2,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class OrderItemCreate(BaseModel):
@@ -16,6 +16,21 @@ class OrderCreate(BaseModel):
     order_type: str = "dine_in"  # dine_in, takeaway, delivery
     items: List[OrderItemCreate]
     notes: Optional[str] = None
+
+
+class PublicOrderItemCreate(BaseModel):
+    menu_item_id: uuid.UUID
+    quantity: int = Field(default=1, ge=1, le=99)
+    special_instructions: Optional[str] = Field(default=None, max_length=500)
+
+
+class PublicOrderCreate(BaseModel):
+    table_number: Optional[str] = Field(default=None, max_length=30)
+    order_type: Optional[str] = Field(default=None, max_length=30)
+    items: List[PublicOrderItemCreate] = Field(..., min_length=1, max_length=50)
+    notes: Optional[str] = Field(default=None, max_length=500)
+    idempotency_key: Optional[str] = Field(default=None, max_length=100)
+
 
 
 class OrderStatusUpdate(BaseModel):

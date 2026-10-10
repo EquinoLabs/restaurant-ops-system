@@ -11,9 +11,19 @@ from app.modules.businesses.schemas import (
     PlatformSubscriptionUpdate,
 )
 from app.core.security import hash_password
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, ValidationError, ForbiddenError
 from app.modules.audit.service import log_audit
+from app.modules.subscriptions.models import Plan, BusinessSubscription
+from app.modules.subscriptions.service import EntitlementService
 
+PLAN_MAP = {
+    'starter': 'starter_pos',
+    'growth': 'growth_pos',
+    'pro': 'pro_kds',
+    'enterprise': 'enterprise',
+    'digital_menu': 'free_qr',
+    'free': 'free_qr',
+}
 
 from sqlalchemy import text
 
@@ -48,7 +58,7 @@ def create_platform_business(
     db: Session, data: PlatformBusinessCreate, actor_user_id: Optional[uuid.UUID] = None
 ) -> Business:
     """
-    Provisions a new Business and its primary Outlet in a single transaction.
+    Provisions a new Business, its initial BusinessSubscription, and primary Outlet in a single transaction.
     Validates public_slug uniqueness.
     """
     slug = data.public_slug.strip().lower()
@@ -65,16 +75,42 @@ def create_platform_business(
     if data.max_outlets is not None and data.max_outlets < 1:
         raise ValidationError("max_outlets must be at least 1 or None.")
 
+    sub_status = data.subscription_status or "trial"
+    trial_ends = data.trial_ends_at
+    if sub_status == "trial" and trial_ends is None:
+        from datetime import timedelta
+        from app.db.base import utc_now
+        trial_ends = utc_now() + timedelta(days=14)
+
     business = Business(
         name=data.name.strip(),
         status="active",
-        subscription_status=data.subscription_status or "trial",
+        subscription_status=sub_status,
         plan_name=data.plan_name,
         max_outlets=data.max_outlets,
-        trial_ends_at=data.trial_ends_at
+        trial_ends_at=trial_ends
     )
     db.add(business)
     db.flush()
+
+    # Create initial BusinessSubscription
+    if data.plan_name:
+        raw_plan = data.plan_name.strip().lower()
+        target_code = PLAN_MAP.get(raw_plan, 'starter_pos')
+    else:
+        target_code = 'starter_pos' if (data.max_outlets == 1) else 'growth_pos'
+
+    plan = db.query(Plan).filter(Plan.code == target_code).first()
+    if plan:
+        sub = BusinessSubscription(
+            business_id=business.id,
+            plan_id=plan.id,
+            status=business.subscription_status,
+            is_current=True,
+            trial_ends_at=business.trial_ends_at
+        )
+        db.add(sub)
+        db.flush()
 
     primary_outlet = Outlet(
         business_id=business.id,
@@ -118,6 +154,7 @@ def update_business_subscription(
 ) -> Business:
     """
     Updates subscription status, account status, plan name, max outlets, and trial end date for a business.
+    Syncs authoritative BusinessSubscription record.
     """
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
@@ -155,6 +192,39 @@ def update_business_subscription(
 
     if data.trial_ends_at is not None:
         business.trial_ends_at = data.trial_ends_at
+
+    # Sync BusinessSubscription
+    curr_sub = db.query(BusinessSubscription).filter(
+        BusinessSubscription.business_id == business_id,
+        BusinessSubscription.is_current == True
+    ).first()
+
+    target_plan_code = PLAN_MAP.get(business.plan_name.lower() if business.plan_name else "", 'free_qr')
+    new_plan = db.query(Plan).filter(Plan.code == target_plan_code).first()
+
+    if new_plan:
+        if curr_sub and curr_sub.plan_id != new_plan.id:
+            curr_sub.is_current = False
+            new_sub = BusinessSubscription(
+                business_id=business_id,
+                plan_id=new_plan.id,
+                status=business.subscription_status,
+                is_current=True,
+                trial_ends_at=business.trial_ends_at
+            )
+            db.add(new_sub)
+        elif curr_sub:
+            curr_sub.status = business.subscription_status
+            curr_sub.trial_ends_at = business.trial_ends_at
+        else:
+            new_sub = BusinessSubscription(
+                business_id=business_id,
+                plan_id=new_plan.id,
+                status=business.subscription_status,
+                is_current=True,
+                trial_ends_at=business.trial_ends_at
+            )
+            db.add(new_sub)
 
     after_state = {
         "status": business.status,
@@ -195,17 +265,32 @@ def add_outlet_to_business(
     db: Session, business_id: uuid.UUID, data: PlatformOutletCreate, actor_user_id: Optional[uuid.UUID] = None
 ) -> Outlet:
     """
-    Adds a new Outlet to an existing Business, respecting business max_outlets limit.
+    Adds a new Outlet to an existing Business, enforcing central EntitlementService authorization and capacity limits.
+    Uses pessimistic row locking on PostgreSQL to prevent concurrent outlet creation race conditions.
     """
-    business = db.query(Business).filter(Business.id == business_id).first()
+    if db.bind and db.bind.dialect.name == "postgresql":
+        business = db.query(Business).with_for_update().filter(Business.id == business_id).first()
+    else:
+        business = db.query(Business).filter(Business.id == business_id).first()
+
     if not business:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
 
-    if business.max_outlets is not None:
+    # Entitlement Check 1: Feature Authorization
+    entitlement = EntitlementService.check_entitlement(db, business_id=business_id, feature_code="outlets.max_count")
+    if not entitlement.authorized:
+        if entitlement.reason == "BUSINESS_SUSPENDED":
+            raise ForbiddenError("This business account is currently suspended.")
+        raise ValidationError(
+            f"Business '{business.name}' is not entitled to create outlets. Reason: {entitlement.reason}"
+        )
+
+    # Entitlement Check 2: Numeric Capacity Limit
+    if entitlement.limit_value is not None:
         current_count = db.query(Outlet).filter(Outlet.business_id == business_id).count()
-        if current_count >= business.max_outlets:
+        if current_count >= entitlement.limit_value:
             raise ValidationError(
-                f"Business '{business.name}' has reached its maximum allowed limit of {business.max_outlets} outlet(s)."
+                f"Business '{business.name}' has reached its maximum allowed limit of {entitlement.limit_value} outlet(s)."
             )
 
     slug = data.public_slug.strip().lower()

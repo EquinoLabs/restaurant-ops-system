@@ -76,3 +76,28 @@ class RequireOutletRole:
 
         return membership
 
+
+class RequireEntitlement:
+    def __init__(self, feature_code: str):
+        self.feature_code = feature_code
+
+    def __call__(
+        self,
+        business_id: uuid.UUID,
+        outlet_id: Optional[uuid.UUID] = None,
+        db: Session = Depends(get_db)
+    ):
+        from app.modules.subscriptions.service import EntitlementService
+        result = EntitlementService.check_entitlement(
+            db=db,
+            business_id=business_id,
+            feature_code=self.feature_code,
+            outlet_id=outlet_id
+        )
+        if not result.authorized:
+            if result.reason == "BUSINESS_SUSPENDED":
+                raise ForbiddenError("This business account is currently suspended.")
+            raise ForbiddenError(f"Entitlement '{self.feature_code}' is not authorized. Reason: {result.reason}")
+        return result
+
+

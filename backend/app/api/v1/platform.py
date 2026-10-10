@@ -17,6 +17,14 @@ from app.modules.businesses.schemas import (
     PlatformAdminUserOut,
 )
 from app.modules.businesses import platform_service
+from app.modules.subscriptions.schemas import (
+    PlatformBusinessEntitlementsOut,
+    PlatformBusinessOverridesResponse,
+    PlatformOverrideCreate,
+    PlatformOverrideRevoke,
+    PlatformOverrideInspectionItem,
+)
+from app.modules.subscriptions.service import EntitlementService
 from app.modules.audit.schemas import PlatformAuditLogListOut, PlatformAuditLogItemOut
 from app.modules.audit import service as audit_service
 
@@ -150,4 +158,68 @@ def assign_owner(
         business_name=mem.outlet.business.name if mem.outlet.business else "",
         role=mem.role
     )
+
+
+@router.get("/businesses/{business_id}/entitlements", response_model=PlatformBusinessEntitlementsOut)
+def inspect_business_entitlements(
+    business_id: uuid.UUID,
+    outlet_id: Optional[uuid.UUID] = Query(default=None),
+    current_user: User = Depends(get_current_platform_admin),
+    db: Session = Depends(get_db)
+):
+    return EntitlementService.inspect_all_entitlements(
+        db=db,
+        business_id=business_id,
+        outlet_id=outlet_id
+    )
+
+
+@router.get("/businesses/{business_id}/overrides", response_model=PlatformBusinessOverridesResponse)
+def inspect_business_overrides(
+    business_id: uuid.UUID,
+    include_expired: bool = Query(default=True),
+    include_revoked: bool = Query(default=True),
+    current_user: User = Depends(get_current_platform_admin),
+    db: Session = Depends(get_db)
+):
+    return EntitlementService.get_business_overrides_history(
+        db=db,
+        business_id=business_id,
+        include_expired=include_expired,
+        include_revoked=include_revoked
+    )
+
+
+@router.post("/businesses/{business_id}/overrides", response_model=PlatformOverrideInspectionItem)
+def create_business_override(
+    business_id: uuid.UUID,
+    data: PlatformOverrideCreate,
+    current_user: User = Depends(get_current_platform_admin),
+    db: Session = Depends(get_db)
+):
+    return EntitlementService.create_override(
+        db=db,
+        business_id=business_id,
+        data=data,
+        actor_user_id=current_user.id
+    )
+
+
+@router.delete("/businesses/{business_id}/overrides/{override_id}")
+def revoke_business_override(
+    business_id: uuid.UUID,
+    override_id: uuid.UUID,
+    data: PlatformOverrideRevoke,
+    current_user: User = Depends(get_current_platform_admin),
+    db: Session = Depends(get_db)
+):
+    return EntitlementService.revoke_override(
+        db=db,
+        business_id=business_id,
+        override_id=override_id,
+        reason=data.reason,
+        actor_user_id=current_user.id
+    )
+
+
 

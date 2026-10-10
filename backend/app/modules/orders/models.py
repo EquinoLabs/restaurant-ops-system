@@ -1,7 +1,7 @@
 import uuid
 from decimal import Decimal
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, Numeric, Text, ForeignKey
+from sqlalchemy import String, Integer, Numeric, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
 class Order(Base, TimestampMixin):
     __tablename__ = "orders"
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "order_number", name="uq_outlet_order_number"),
+    )
 
     outlet_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -74,3 +77,29 @@ class OrderItem(Base, TimestampMixin):
 
     order: Mapped["Order"] = relationship("Order", back_populates="items")
     menu_item: Mapped[Optional["MenuItem"]] = relationship("MenuItem")
+
+
+class OrderIdempotencyKey(Base, TimestampMixin):
+    __tablename__ = "order_idempotency_keys"
+    __table_args__ = (
+        UniqueConstraint("outlet_id", "idempotency_key", name="uq_outlet_idempotency_key"),
+    )
+
+    outlet_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("outlets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("orders.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    outlet: Mapped["Outlet"] = relationship("Outlet")
+    order: Mapped["Order"] = relationship("Order")
+
