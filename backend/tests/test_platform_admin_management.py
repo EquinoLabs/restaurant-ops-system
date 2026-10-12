@@ -315,4 +315,218 @@ def test_zero_owner_governance_fails_closed_503(client: TestClient, db_session: 
     assert revoke_resp.json()["detail"]["error"]["code"] == "PLATFORM_OWNER_NOT_INITIALIZED"
 
 
+def test_revoke_modern_admin_clears_role_and_denies_commercial_access(client: TestClient, db_session: Session):
+    from app.modules.businesses.models import Business
+
+    # 1. Setup active Owner and modern Admin
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+
+    admin = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    admin.is_platform_admin = True
+    admin.platform_role = "admin"
+    db_session.commit()
+
+    # 2. Verify modern Admin initially has commercial and operations access
+    admin_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "unauth@test.com", "password": "password123"},
+    )
+    admin_token = admin_login.json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+    assert client.get("/api/v1/platform/businesses", headers=admin_headers).status_code == 200
+    assert client.get("/api/v1/platform/plans", headers=admin_headers).status_code == 200
+    assert client.get("/api/v1/platform/audit-logs", headers=admin_headers).status_code == 200
+
+    # 3. Owner revokes the modern Admin via API
+    owner_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+    owner_token = owner_login.json()["access_token"]
+    owner_headers = {"Authorization": f"Bearer {owner_token}"}
+
+    revoke_resp = client.post(f"/api/v1/platform/admins/{admin.id}/revoke", headers=owner_headers)
+    assert revoke_resp.status_code == 200
+    revoked_payload = revoke_resp.json()
+    assert revoked_payload["is_platform_admin"] is False
+    assert revoked_payload["platform_role"] is None
+
+    # 4. Assert database fields are both cleared atomically
+    db_session.refresh(admin)
+    assert admin.is_platform_admin is False
+    assert admin.platform_role is None
+
+    # 5. Assert audit log was recorded with actor=owner and target=admin
+    revoke_log = db_session.query(AuditLog).filter(
+        AuditLog.action == "platform.admin.revoke",
+        AuditLog.actor_user_id == owner.id,
+        AuditLog.entity_id == admin.id
+    ).first()
+    assert revoke_log is not None
+    assert revoke_log.metadata_json["target_email"] == "unauth@test.com"
+    assert revoke_log.metadata_json["outcome"] == "success"
+
+    # 6. Verify effective role via /api/v1/me
+    me_resp = client.get("/api/v1/me", headers=admin_headers)
+    assert me_resp.status_code == 200
+    assert me_resp.json()["is_platform_admin"] is False
+    assert me_resp.json()["platform_role"] is None
+
+    # 7. CRITICAL VERIFICATION: Revoked user receives HTTP 403 on all commercial and operations endpoints
+    assert client.get("/api/v1/platform/businesses", headers=admin_headers).status_code == 403
+    assert client.get("/api/v1/platform/plans", headers=admin_headers).status_code == 403
+    assert client.get("/api/v1/platform/audit-logs", headers=admin_headers).status_code == 403
+    assert client.get("/api/v1/platform/admins", headers=admin_headers).status_code == 403
+    assert client.post("/api/v1/platform/businesses", headers=admin_headers, json={
+        "name": "Revoked Biz Attempt",
+        "primary_outlet_name": "Main",
+        "public_slug": "revoked-biz-attempt"
+    }).status_code == 403
+
+    biz = db_session.query(Business).first()
+    if biz:
+        assert client.patch(f"/api/v1/platform/businesses/{biz.id}", headers=admin_headers, json={
+            "name": "Unauthorized Update"
+        }).status_code == 403
+
+
+def test_grant_admin_restores_admin_role_and_commercial_access(client: TestClient, db_session: Session):
+    # Setup owner and target ordinary user
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+
+    target = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    target.is_platform_admin = False
+    target.platform_role = None
+    db_session.commit()
+
+    owner_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    # 1. Grant admin
+    grant_resp = client.post(f"/api/v1/platform/admins/{target.id}/grant", headers=owner_headers)
+    assert grant_resp.status_code == 200
+    assert grant_resp.json()["is_platform_admin"] is True
+    assert grant_resp.json()["platform_role"] == "admin"
+
+    # 2. Database state verified
+    db_session.refresh(target)
+    assert target.is_platform_admin is True
+    assert target.platform_role == "admin"
+
+    # 3. Target now has commercial access
+    target_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "unauth@test.com", "password": "password123"},
+    )
+    target_headers = {"Authorization": f"Bearer {target_login.json()['access_token']}"}
+
+    assert client.get("/api/v1/platform/businesses", headers=target_headers).status_code == 200
+    assert client.get("/api/v1/platform/plans", headers=target_headers).status_code == 200
+
+    # 4. Target is an Admin, NOT an Owner: denied on owner-only governance endpoints
+    fake_user_id = uuid.uuid4()
+    assert client.post(f"/api/v1/platform/admins/{fake_user_id}/grant", headers=target_headers).status_code == 403
+    assert client.post(f"/api/v1/platform/admins/{fake_user_id}/revoke", headers=target_headers).status_code == 403
+
+
+def test_cannot_revoke_owner_via_admin_revoke(client: TestClient, db_session: Session):
+    from app.core.errors import ValidationError
+    from app.modules.businesses.platform_service import revoke_platform_admin
+
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+
+    admin = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    admin.is_platform_admin = True
+    admin.platform_role = "admin"
+
+    # Add a third active admin so len(active_admins) > 1
+    third_admin = User(
+        email="third_admin@test.com",
+        password_hash=owner.password_hash,
+        display_name="Third Admin",
+        status="active",
+        is_platform_admin=True,
+        platform_role="admin"
+    )
+    db_session.add(third_admin)
+    db_session.commit()
+
+    # Direct service call attempting to revoke Owner with a different actor ID
+    with pytest.raises(ValidationError) as exc_info:
+        revoke_platform_admin(db_session, target_user_id=owner.id, actor_user_id=admin.id)
+    assert "Owner privileges cannot be revoked" in str(exc_info.value)
+
+    # Verify Owner state is completely unchanged
+    db_session.refresh(owner)
+    assert owner.is_platform_admin is True
+    assert owner.platform_role == "owner"
+
+
+def test_grant_admin_on_owner_is_noop(client: TestClient, db_session: Session):
+    from app.modules.businesses.platform_service import grant_platform_admin
+
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+    db_session.commit()
+
+    initial_audit_count = db_session.query(AuditLog).filter(AuditLog.action == "platform.admin.grant").count()
+
+    result = grant_platform_admin(db_session, target_user_id=owner.id, actor_user_id=owner.id)
+    assert result.id == owner.id
+    assert result.platform_role == "owner"
+    assert result.is_platform_admin is True
+
+    # No duplicate audit log created
+    assert db_session.query(AuditLog).filter(AuditLog.action == "platform.admin.grant").count() == initial_audit_count
+
+
+def test_legacy_admin_revocation_clears_access(client: TestClient, db_session: Session):
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+
+    # Setup legacy admin with platform_role IS NULL
+    legacy_admin = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    legacy_admin.is_platform_admin = True
+    legacy_admin.platform_role = None
+    db_session.commit()
+
+    # Legacy admin initially has access via legacy bridge
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "unauth@test.com", "password": "password123"},
+    )
+    headers = {"Authorization": f"Bearer {login_resp.json()['access_token']}"}
+    assert client.get("/api/v1/platform/businesses", headers=headers).status_code == 200
+
+    # Owner revokes legacy admin
+    owner_login = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+    owner_headers = {"Authorization": f"Bearer {owner_login.json()['access_token']}"}
+
+    revoke_resp = client.post(f"/api/v1/platform/admins/{legacy_admin.id}/revoke", headers=owner_headers)
+    assert revoke_resp.status_code == 200
+
+    db_session.refresh(legacy_admin)
+    assert legacy_admin.is_platform_admin is False
+    assert legacy_admin.platform_role is None
+
+    # Revoked legacy admin is denied access
+    assert client.get("/api/v1/platform/businesses", headers=headers).status_code == 403
+
+
+
 

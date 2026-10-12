@@ -852,10 +852,14 @@ def grant_platform_admin(
     if not user:
         raise NotFoundError(f"User with ID '{target_user_id}' not found.")
 
-    if user.is_platform_admin:
+    if user.platform_role == "owner":
+        return user
+
+    if user.is_platform_admin and user.platform_role == "admin":
         return user
 
     user.is_platform_admin = True
+    user.platform_role = "admin"
     db.flush()
 
     log_audit(
@@ -893,7 +897,7 @@ def revoke_platform_admin(
     if not user:
         raise NotFoundError(f"User with ID '{target_user_id}' not found.")
 
-    if not user.is_platform_admin:
+    if not user.is_platform_admin and user.platform_role != "admin":
         return user
 
     if user.status == "active":
@@ -909,7 +913,11 @@ def revoke_platform_admin(
     if target_user_id == actor_user_id:
         raise ValidationError("Platform administrators cannot revoke their own privileges.")
 
+    if user.platform_role == "owner":
+        raise ValidationError("Platform Owner privileges cannot be revoked.")
+
     user.is_platform_admin = False
+    user.platform_role = None
     db.flush()
 
     log_audit(
