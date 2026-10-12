@@ -14,14 +14,15 @@ import app.modules.tables.models      # noqa: F401
 import app.modules.orders.models      # noqa: F401
 from app.db.session import SessionLocal
 from app.modules.staff.models import User
-
-
+from app.modules.businesses.platform_service import _acquire_admin_serialization_lock
 
 
 def promote_user_to_platform_admin(email: str, db=None) -> bool:
     """
     Promotes an existing user account to Platform Administrator by email.
-    Returns True if user promoted successfully, False if user not found.
+    Dual-writes is_platform_admin=True and platform_role="admin" atomically
+    under transaction serialization.
+    Returns True if user promoted successfully (or already an admin/owner), False if user not found.
     """
     normalized_email = email.strip().lower()
     close_db = False
@@ -31,21 +32,31 @@ def promote_user_to_platform_admin(email: str, db=None) -> bool:
         close_db = True
 
     try:
+        _acquire_admin_serialization_lock(db)
+
         user = db.query(User).filter(User.email == normalized_email).first()
         if not user:
             print(f"Error: User with email '{normalized_email}' was not found.")
             print("Please create the user account first before promoting to platform administrator.")
             return False
 
-        if user.is_platform_admin:
+        if user.platform_role == "owner":
+            print(f"Notice: User '{normalized_email}' is the Platform Owner and cannot be modified.")
+            return True
+
+        if user.is_platform_admin and user.platform_role == "admin":
             print(f"Notice: User '{normalized_email}' is already a Platform Administrator.")
             return True
 
         user.is_platform_admin = True
+        user.platform_role = "admin"
         db.commit()
         db.refresh(user)
         print(f"Success: User '{normalized_email}' (ID: {user.id}) has been promoted to Platform Administrator.")
         return True
+    except Exception:
+        db.rollback()
+        raise
     finally:
         if close_db:
             db.close()

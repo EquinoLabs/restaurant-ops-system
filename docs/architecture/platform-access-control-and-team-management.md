@@ -1,7 +1,7 @@
 # ROMS Platform Access Control & Team Management Architecture
 
-**Document Version:** 1.9.0  
-**Status:** Architecture Specification & Phased Execution Progress (Phases 1–6 Accepted & Closed; Phase 7 Pending Authorization)  
+**Document Version:** 1.9.1
+**Status:** Architecture Specification & Phased Execution Progress (Phases 1–6 Accepted & Closed; Task 1.1 Accepted; Stage 1 In Progress)
 **Target Path:** `docs/architecture/platform-access-control-and-team-management.md`  
 **Author:** Senior Product Architect & Platform Security Reviewer  
 
@@ -22,6 +22,7 @@
 | `1.8.0` | 2026-10-12 | Senior Product Architect & Platform Security Reviewer | Explicitly documented quarantine and migration-blocking policy for contradictory records that cannot be confidently resolved from available audit evidence; prohibited heuristic guessing or field precedence; required documented, explicitly authorized resolution based on verified evidence; reinforced that Stage 5 failure gate unconditionally blocks Stage 6 constraint enforcement while unresolved records remain; preserved safe legacy-admin backfill and valid-pair preservation logic; reaffirmed DECISION-OP-01 through OP-05. |
 | `1.8.1` | 2026-10-12 | Senior Product Architect & Platform Security Reviewer | Corrected audit durability wording in §6.2 to require a committed, auditable record without claims of indelibility or permanent persistence, aligning with §5.4; clarified the operational meaning of quarantine in §6.2 and §6.4 as exclusion from successful reconciliation and fail-closed gate blocking without implying a separate database table or subsystem; preserved no-guessing, no-precedence, and valid role pair preservation rules; reaffirmed DECISION-OP-01 through OP-05. |
 | `1.9.0` | 2026-10-13 | Senior Product Architect & Platform Security Reviewer | Formally recorded Phase 6 (Business & Outlet Profile Management) acceptance and closure; resolved security findings M-01 (API data exposure) and L-01 (Frontend card visibility); verified 138/138 backend and 76/76 frontend tests passing; recorded final read-only authorization audit PASS; confirmed draft migration 0011 remains unapplied (zero live DB migrations); reaffirmed open decisions OP-01 through OP-05. |
+| `1.9.1` | 2026-10-13 | Senior Product Architect & Platform Security Reviewer | Formally recorded Task 1.1 acceptance (Migration 0011 structural & execution test harness, CLI dual-write promotion & Owner protection); verified 146/146 backend tests passing (33/33 in focused suites); noted SQLite test boundary for PostgreSQL advisory locks and partial unique indexes; confirmed migration 0011 remains unapplied draft with zero live DB operations; reaffirmed OP-01 through OP-05 strictly OPEN; confirmed initial Owner identity unresolved and Stage 1 remains in progress. |
 
 ---
 
@@ -1058,8 +1059,13 @@ A dedicated test suite executing every operation against each role:
 
 This document records architectural specifications and phase completion milestones:
 - **Phase 6 Closure:** Formally accepted with security remediation findings M-01 and L-01 resolved, 138/138 backend tests and 76/76 frontend tests passing, and authorization audit verified PASS.
-- **Database & Migration Boundaries:** Zero database schema modifications executed. Migration `0011_add_platform_role_column.py` remains an unapplied draft. Zero live databases were accessed or mutated.
-- **Repository Integrity:** All 24 tracked modified files and 9 untracked files remain intact and preserved in the working tree. No application code, test files, schemas, or migrations were modified during this documentation closure.
-- **Git Boundaries:** Zero Git operations (`commit`, `stage`, `push`, `revert`, `discard`, `reset`, `stash`, `checkout`) were executed.
-- **Open Product Decisions:** All five open product decisions (`DECISION-OP-01` through `DECISION-OP-05`) remain strictly **OPEN** with existing definitions preserved.
-- **Phase 7 Boundary:** Formal acceptance of Phase 6 does **NOT** constitute authorization to begin Phase 7. Phase 7 requires explicit, separate authorization.
+- **Task 1.1 Acceptance (Migration 0011 Test Harness & CLI Dual-Write Safety):** Formally accepted following read-only code review and verification:
+  - Alembic migration 0011 structural and upgrade/downgrade execution tests verified against isolated SQLite schema (`backend/tests/test_alembic_migrations.py`), validating nullable `platform_role String(20)` column, non-unique `ix_users_platform_role` index, unconstrained schema expansion, data preservation with `platform_role IS NULL`, and clean downgrade.
+  - CLI bootstrap and promotion script (`backend/scripts/create_platform_admin.py`) dual-writes `is_platform_admin = True` and `platform_role = "admin"` atomically under transaction serialization lock, protects Owner targets via safe no-op, and performs explicit transaction rollback on exceptions.
+  - Platform identity and management tests updated to assert dual-field persistence; full backend test suite passing at 146/146 (focused suites passing at 33/33).
+- **Concurrency & Database Testing Boundaries:** Migration structural and execution tests were validated against isolated SQLite schemas; SQLite testing validates migration logic and dual-field persistence, but does NOT enforce PostgreSQL-specific transaction-scoped advisory locks (`pg_advisory_xact_lock`), row-level locks (`SELECT FOR UPDATE`), or partial unique indexes (`WHERE platform_role = 'owner'`). Concurrency validation for these constructs remains deferred to dedicated PostgreSQL test environments.
+- **Database & Migration Boundaries:** Zero database schema modifications executed against shared/staging/production databases. Migration `0011_add_platform_role_column.py` remains an unapplied draft. Applied migration head remains `0010_subscription_entitlements_schema.py`. Zero live databases were accessed or mutated.
+- **Open Product Decisions:** All five open product decisions (`DECISION-OP-01` through `DECISION-OP-05`) remain strictly **OPEN** (proposals only).
+- **Initial Owner Identity Boundary:** Initial Owner identity remains unresolved and unassigned. Initial ownership requires explicit, verified written designation.
+- **Stage 1 Status:** Stage 1 preflight and implementation preparation is IN PROGRESS and is NOT marked fully closed until all preflight verification requirements are evidenced. While open decisions OP-01 through OP-05 remain unresolved proposals that block downstream operational and governance activation stages (e.g., OP-04 blocks Stage 7 Owner bootstrap), they do not block unconstrained schema expansion (Stage 2 / Migration 0011) once Stage 1 preflight requirements are authorized.
+- **Phase 7 Boundary:** Formal acceptance of Phase 6 and Task 1.1 does **NOT** constitute authorization to begin Phase 7. Phase 7 requires explicit, separate authorization.

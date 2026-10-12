@@ -31,12 +31,28 @@ def test_default_user_is_not_platform_admin(db_session: Session):
 def test_cli_promote_existing_user(db_session: Session):
     user = db_session.query(User).filter(User.email == "staff@test.com").first()
     assert user.is_platform_admin is False
+    assert user.platform_role is None
 
     success = promote_user_to_platform_admin("staff@test.com", db=db_session)
     assert success is True
 
     db_session.refresh(user)
     assert user.is_platform_admin is True
+    assert user.platform_role == "admin"
+
+
+def test_cli_promote_owner_is_safe_noop(db_session: Session):
+    user = db_session.query(User).filter(User.email == "staff@test.com").first()
+    user.is_platform_admin = True
+    user.platform_role = "owner"
+    db_session.commit()
+
+    success = promote_user_to_platform_admin("staff@test.com", db=db_session)
+    assert success is True
+
+    db_session.refresh(user)
+    assert user.is_platform_admin is True
+    assert user.platform_role == "owner"
 
 
 def test_cli_promote_unknown_user_fails(db_session: Session):

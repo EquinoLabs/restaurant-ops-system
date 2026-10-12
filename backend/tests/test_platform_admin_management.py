@@ -161,6 +161,7 @@ def test_cli_bootstrap_script_compatibility(client: TestClient, db_session: Sess
 
     unauth = db_session.query(User).filter(User.email == "unauth@test.com").first()
     assert unauth.is_platform_admin is True
+    assert unauth.platform_role == "admin"
 
     # Promoting again returns True (notice/no-op)
     assert promote_user_to_platform_admin("unauth@test.com", db=db_session) is True

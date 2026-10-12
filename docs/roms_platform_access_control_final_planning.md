@@ -117,3 +117,42 @@
   • Zero Git Actions: Zero Git commands run (commit, stage, push, revert, discard, stash, checkout).
   • Decision Register: Decisions OP-01 through OP-05 remain strictly OPEN.
   • Phase 7 Boundary: Phase 7 is NOT authorized or started. Standing by for stakeholder instructions.
+
+  ──────
+  ## 7. Task 1.1 Formal Acceptance (Migration 0011 Test Harness & CLI Dual-Write Safety)
+
+  Task 1.1 was formally accepted on 2026-10-13 following successful code review, test verification, and invariant preservation checks.
+
+  ### 7.1 Scope & Changes Accepted
+  • Migration 0011 Test Harness (`backend/tests/test_alembic_migrations.py`):
+    - Added `test_alembic_migration_0011_structure` verifying revision `0011_add_platform_role_column`, down_revision `0010_subscription_entitlements_schema`, and upgrade/downgrade callables.
+    - Added `test_migration_0011_upgrade_and_downgrade_execution` validating upgrade and downgrade against an isolated SQLite test database with pre-seeded users.
+    - Verified `users.platform_role` column added as nullable `String(20)` with non-unique index `ix_users_platform_role`.
+    - Verified zero check constraints or premature role restrictions added (unconstrained expansion).
+    - Verified pre-existing user data survives intact with `platform_role IS NULL` (zero premature backfill).
+    - Verified clean downgrade drops column and index while preserving pre-existing user data.
+  • CLI Bootstrap & Promotion Dual-Write Safety (`backend/scripts/create_platform_admin.py`):
+    - Atomic dual-write: writes both `is_platform_admin = True` AND `platform_role = "admin"` atomically under `_acquire_admin_serialization_lock(db)`.
+    - Owner target protection: safe no-op returning `True` without modifying either role field if `user.platform_role == "owner"`.
+    - Idempotency & error handling: safe no-op if already Admin; explicit `db.rollback()` on exceptions.
+  • Test Assertions & Regression Coverage (`backend/tests/test_platform_admin_identity.py`, `backend/tests/test_platform_admin_management.py`):
+    - Updated identity and management test suites to assert both `is_platform_admin is True` and `platform_role == "admin"`.
+    - Added test `test_cli_promote_owner_is_safe_noop` asserting Owner targets are preserved unmodified.
+
+  ### 7.2 Verification & Test Results
+  • Focused Migration Suite: 6 / 6 tests passing.
+  • Platform Admin Identity Suite: 10 / 10 tests passing.
+  • Platform Admin Management Suite: 17 / 17 tests passing.
+  • Combined Focused Suite: 33 / 33 tests passing.
+  • Full Backend Test Suite: 146 / 146 tests passing (100% pass rate).
+  • All test results recorded as implementation-reported, with migration structural and execution tests validated specifically against isolated SQLite test databases.
+
+  ### 7.3 Concurrency & Database Testing Boundaries
+  • SQLite Test Boundary: Migration structural and execution tests were validated against isolated SQLite schemas; SQLite testing validates migration logic and dual-field persistence, but does NOT enforce PostgreSQL-specific transaction-scoped advisory locks (`pg_advisory_xact_lock`), row-level locks (`SELECT FOR UPDATE`), or partial unique index expressions (`WHERE platform_role = 'owner'`). Concurrency validation for these constructs remains deferred to dedicated PostgreSQL test environments.
+  • Migration 0011 Status: Draft migration `0011_add_platform_role_column.py` remains strictly UNAPPLIED against any shared, staging, or production database.
+  • Zero Database Operations: Applied migration head remains `0010_subscription_entitlements_schema.py`. Zero live databases were accessed or mutated.
+
+  ### 7.4 Governance Status & Stage 1 Boundary
+  • Open Decisions Unchanged: Decisions `DECISION-OP-01` through `DECISION-OP-05` remain strictly OPEN (proposed defaults have not been formally accepted as live specifications).
+  • Initial Owner Identity Unresolved: The initial Owner identity is NOT chosen, inferred, or hardcoded.
+  • Stage 1 Status: Stage 1 preflight and implementation preparation is IN PROGRESS and is NOT marked fully closed until all preflight verification requirements are evidenced. While open decisions OP-01 through OP-05 remain unresolved proposals that block downstream operational and governance activation stages (e.g., OP-04 blocks Stage 7 Owner bootstrap), they do not block unconstrained schema expansion (Stage 2 / Migration 0011) once Stage 1 preflight requirements are authorized.
