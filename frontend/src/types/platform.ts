@@ -19,10 +19,10 @@ export interface PlatformBusiness {
   id: string;
   name: string;
   status: string;
-  subscription_status: string;
-  plan_name: string | null;
-  max_outlets: number | null;
-  trial_ends_at: string | null;
+  subscription_status?: string;
+  plan_name?: string | null;
+  max_outlets?: number | null;
+  trial_ends_at?: string | null;
   outlets: PlatformOutlet[];
   created_at: string;
   updated_at: string;
@@ -41,12 +41,58 @@ export interface PlatformBusinessCreatePayload {
   trial_ends_at?: string | null;
 }
 
+export interface PlatformBusinessProfileUpdatePayload {
+  name: string;
+}
+
+export interface PlatformOutletProfileUpdatePayload {
+  name?: string;
+  address?: string | null;
+  timezone?: string;
+  currency?: string;
+  primary_color?: string | null;
+  accent_color?: string | null;
+}
+
+export interface PlatformPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BusinessSubscriptionItem {
+  id: string;
+  business_id: string;
+  plan_id: string;
+  status: string;
+  is_current: boolean;
+  trial_ends_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  cancelled_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  plan: PlatformPlan | null;
+}
+
 export interface PlatformSubscriptionUpdatePayload {
+  action_type?: string;
+  plan_code?: string;
+  plan_name?: string | null;
   subscription_status?: string;
   status?: string;
-  plan_name?: string | null;
   max_outlets?: number | null;
   trial_ends_at?: string | null;
+  current_period_start?: string | null;
+  current_period_end?: string | null;
+  cancel_at_period_end?: boolean;
+  reason?: string;
 }
 
 export interface PlatformOutletCreatePayload {
@@ -65,12 +111,15 @@ export interface PlatformAssignOwnerPayload {
   display_name?: string;
 }
 
+export type PlatformUserRole = 'owner' | 'admin' | 'operator';
+
 export interface PlatformAdminUser {
   id: string;
   email: string;
   display_name: string;
   status: string;
   is_platform_admin: boolean;
+  platform_role?: PlatformUserRole | string | null;
   created_at: string;
   updated_at: string;
 }

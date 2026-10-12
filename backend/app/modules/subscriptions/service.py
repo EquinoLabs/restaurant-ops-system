@@ -1,3 +1,4 @@
+import calendar
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -18,6 +19,24 @@ def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def compute_annual_period_end(start_dt: datetime) -> datetime:
+    """
+    Computes the exact 1-calendar-year contractual anniversary.
+    Preserves time and timezone (normalized to UTC).
+    Handles leap days (Feb 29 -> Feb 28 in non-leap year) and month-end dates.
+    """
+    start_utc = ensure_utc(start_dt)
+    target_year = start_utc.year + 1
+    target_month = start_utc.month
+    target_day = start_utc.day
+
+    max_days = calendar.monthrange(target_year, target_month)[1]
+    if target_day > max_days:
+        target_day = max_days
+
+    return start_utc.replace(year=target_year, day=target_day)
 
 
 class EntitlementService:
@@ -62,9 +81,9 @@ class EntitlementService:
                 return "expired"
             return "trial"
 
-        # Period expiration check for active / past_due (0-day grace)
+        # Period expiration check for active / past_due (0-day grace, fail-closed if missing)
         if status in ("active", "past_due"):
-            if current_period_end is not None and now >= current_period_end:
+            if current_period_end is None or now >= current_period_end:
                 return "expired"
             return status
 

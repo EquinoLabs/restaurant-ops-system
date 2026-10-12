@@ -1,15 +1,63 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { PlatformAdminUser } from '../../types/platform';
 import { fetchPlatformAdmins, grantPlatformAdmin, revokePlatformAdmin } from '../../api/client';
+import { useAuth } from '../authentication/AuthContext';
+import { UserMe } from '../../types/auth';
 
 interface PlatformAdminManagementProps {
   token: string | null;
 }
 
+export function getPlatformRoleInfo(user: PlatformAdminUser): { label: string; badgeClasses: string } {
+  const normalizedRole = user.platform_role?.trim().toLowerCase();
+  if (normalizedRole === 'owner') {
+    return {
+      label: 'Platform Owner',
+      badgeClasses: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
+    };
+  }
+  if (normalizedRole === 'admin') {
+    return {
+      label: 'Platform Admin',
+      badgeClasses: 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30',
+    };
+  }
+  if (normalizedRole === 'operator') {
+    return {
+      label: 'Platform Operator',
+      badgeClasses: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
+    };
+  }
+  // Legacy compatibility: platform_role is null/undefined and is_platform_admin is true
+  if ((user.platform_role === null || user.platform_role === undefined) && user.is_platform_admin) {
+    return {
+      label: 'Platform Admin (Legacy)',
+      badgeClasses: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
+    };
+  }
+  return {
+    label: 'Standard User',
+    badgeClasses: 'bg-slate-800 text-slate-400 border-slate-700',
+  };
+}
+
 export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = ({ token }) => {
+  let currentUser: UserMe | null = null;
+  try {
+    const auth = useAuth();
+    currentUser = auth.user;
+  } catch {
+    currentUser = null;
+  }
+
+  const isOperator = currentUser?.platform_role === 'operator';
+  const isCurrentOwner = Boolean(currentUser && currentUser.platform_role?.toLowerCase() === 'owner');
+
   const [admins, setAdmins] = useState<PlatformAdminUser[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [ownerNotInitialized, setOwnerNotInitialized] = useState<boolean>(false);
+  const [permissionDenied, setPermissionDenied] = useState<boolean>(false);
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   // Modal & Action state
@@ -19,24 +67,48 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
   const [actionError, setActionError] = useState<string | null>(null);
 
   const loadAdmins = useCallback(async () => {
-    if (!token) return;
+    if (!token || isOperator) {
+      setLoading(false);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
+      setOwnerNotInitialized(false);
+      setPermissionDenied(false);
       const data = await fetchPlatformAdmins(token);
       setAdmins(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load platform administrator directory.');
+      if (
+        err.status === 503 ||
+        err.code === 'PLATFORM_OWNER_NOT_INITIALIZED' ||
+        err.message?.includes('Platform Owner has not been initialized')
+      ) {
+        setOwnerNotInitialized(true);
+        setError(err.message || 'Platform Owner has not been initialized. Governance operations are unavailable.');
+      } else if (
+        err.status === 403 ||
+        err.message?.includes('Forbidden') ||
+        err.message?.includes('privileges are required')
+      ) {
+        setPermissionDenied(true);
+        setError(err.message || 'Platform administrator privileges are required to view this directory.');
+      } else {
+        setError(err.message || 'Failed to load platform administrator directory.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, isOperator]);
 
   useEffect(() => {
     loadAdmins();
   }, [loadAdmins]);
 
   const handleOpenConfirmModal = (user: PlatformAdminUser, type: 'grant' | 'revoke') => {
+    if (type === 'revoke' && currentUser && currentUser.id === user.id) {
+      return;
+    }
     setSelectedUser(user);
     setActionType(type);
     setActionError(null);
@@ -51,6 +123,14 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
 
   const handleConfirmAction = async () => {
     if (!token || !selectedUser || !actionType) return;
+    if (actionType === 'revoke' && currentUser && currentUser.id === selectedUser.id) {
+      setActionError('Platform administrators cannot revoke their own privileges.');
+      return;
+    }
+    if (!isCurrentOwner) {
+      setActionError('Permission denied: Only Platform Owners may modify administrator privileges.');
+      return;
+    }
     try {
       setIsSubmitting(true);
       setActionError(null);
@@ -67,11 +147,41 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
       handleCloseModal();
       await loadAdmins();
     } catch (err: any) {
-      setActionError(err.message || `Failed to ${actionType} administrator privileges.`);
+      if (
+        err.status === 503 ||
+        err.code === 'PLATFORM_OWNER_NOT_INITIALIZED' ||
+        err.message?.includes('Platform Owner has not been initialized')
+      ) {
+        setOwnerNotInitialized(true);
+        setActionError('Platform Owner has not been initialized. Governance operations are unavailable (HTTP 503).');
+      } else if (err.status === 403) {
+        setActionError(err.message || 'Permission denied: Only Platform Owners may modify administrator privileges (HTTP 403).');
+      } else {
+        setActionError(err.message || `Failed to ${actionType} administrator privileges.`);
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  // Direct navigation guard for Platform Operators
+  if (isOperator) {
+    return (
+      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-8 text-center max-w-xl mx-auto space-y-4 my-8 shadow-xl">
+        <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 mx-auto flex items-center justify-center">
+          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-white">Access Restricted: Platform Operator</h3>
+          <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+            Platform Operators do not have administrative directory access. Access to the platform team management directory is restricted to Platform Owners and Platform Admins.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -102,6 +212,44 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
       </div>
 
       {/* Global Alerts */}
+      {ownerNotInitialized && (
+        <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-2xl text-amber-300 text-xs flex items-start justify-between gap-3 shadow-lg">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <div>
+              <div className="font-bold text-amber-200">Platform Governance Offline (Zero-Owner State)</div>
+              <p className="mt-0.5 text-amber-300/90 leading-relaxed">
+                Platform Owner has not been initialized. Ordinary role-governance endpoints fail closed with HTTP 503 Service Unavailable. Commercial and operations routes remain active.
+              </p>
+            </div>
+          </div>
+          <button onClick={() => setOwnerNotInitialized(false)} className="text-amber-400 hover:text-amber-300 font-bold p-1">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {permissionDenied && (
+        <div className="p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl text-rose-300 text-xs flex items-start justify-between gap-3 shadow-lg">
+          <div className="flex items-start gap-3">
+            <svg className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+            <div>
+              <div className="font-bold text-rose-200">Permission Denied</div>
+              <p className="mt-0.5 text-rose-300/90 leading-relaxed">
+                {error || 'Platform administrator privileges are required to view this directory (HTTP 403).'}
+              </p>
+            </div>
+          </div>
+          <button onClick={() => setPermissionDenied(false)} className="text-rose-400 hover:text-rose-300 font-bold p-1">
+            ✕
+          </button>
+        </div>
+      )}
+
       {actionSuccess && (
         <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-400 text-xs font-medium flex items-center justify-between">
           <span>{actionSuccess}</span>
@@ -111,7 +259,7 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
         </div>
       )}
 
-      {error && (
+      {error && !ownerNotInitialized && !permissionDenied && (
         <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-xs font-medium flex items-center justify-between">
           <div>
             <div className="font-bold">Error Loading Administrator Directory</div>
@@ -150,63 +298,77 @@ export const PlatformAdminManagement: React.FC<PlatformAdminManagementProps> = (
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/80">
-                {admins.map((user) => (
-                  <tr key={user.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="py-4 px-6">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-sm">
-                          {user.display_name ? user.display_name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                {admins.map((user) => {
+                  const isSelf = Boolean(currentUser && currentUser.id === user.id);
+                  const roleInfo = getPlatformRoleInfo(user);
+                  return (
+                    <tr key={user.id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="py-4 px-6">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 font-bold text-sm">
+                            {user.display_name ? user.display_name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <div className="font-bold text-white text-sm">{user.display_name || 'Administrator'}</div>
+                            <div className="text-slate-400 font-mono text-[11px]">{user.email}</div>
+                          </div>
                         </div>
-                        <div>
-                          <div className="font-bold text-white text-sm">{user.display_name || 'Administrator'}</div>
-                          <div className="text-slate-400 font-mono text-[11px]">{user.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
-                          user.status === 'active'
-                            ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                            : 'bg-red-500/10 text-red-400 border-red-500/20'
-                        }`}
-                      >
-                        {user.status}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6">
-                      <span
-                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
-                          user.is_platform_admin
-                            ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
-                            : 'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}
-                      >
-                        {user.is_platform_admin ? 'Platform Administrator' : 'Standard User'}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6 text-slate-400 text-[11px]">
-                      {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
-                    </td>
-                    <td className="py-4 px-6 text-right">
-                      {user.is_platform_admin ? (
-                        <button
-                          onClick={() => handleOpenConfirmModal(user, 'revoke')}
-                          className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-xs transition-colors"
+                      </td>
+                      <td className="py-4 px-6">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${
+                            user.status === 'active'
+                              ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                              : 'bg-red-500/10 text-red-400 border-red-500/20'
+                          }`}
                         >
-                          Revoke Access
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handleOpenConfirmModal(user, 'grant')}
-                          className="px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-colors"
+                          {user.status}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6">
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border ${roleInfo.badgeClasses}`}
                         >
-                          Grant Access
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                          {roleInfo.label}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 text-slate-400 text-[11px]">
+                        {user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}
+                      </td>
+                      <td className="py-4 px-6 text-right">
+                        {isSelf ? (
+                          <span
+                            className="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-800 text-slate-500 border border-slate-700 text-xs font-semibold cursor-not-allowed select-none"
+                            title="You cannot revoke your own administrator privileges"
+                          >
+                            Current User (Self)
+                          </span>
+                        ) : !isCurrentOwner ? (
+                          <span
+                            className="inline-flex items-center px-3 py-1.5 rounded-xl bg-slate-800/80 text-slate-500 border border-slate-700/60 text-xs font-semibold cursor-not-allowed select-none"
+                            title="Privilege modifications require Platform Owner authorization"
+                          >
+                            Requires Owner
+                          </span>
+                        ) : user.is_platform_admin ? (
+                          <button
+                            onClick={() => handleOpenConfirmModal(user, 'revoke')}
+                            className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 font-semibold text-xs transition-colors"
+                          >
+                            Revoke Access
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleOpenConfirmModal(user, 'grant')}
+                            className="px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold text-xs transition-colors"
+                          >
+                            Grant Access
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -30,9 +30,14 @@ class UserMeOut(BaseModel):
     display_name: str
     status: str
     is_platform_admin: bool = False
+    platform_role: Optional[str] = None
     memberships: List[OutletMembershipOut]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+# Alias for compatibility with architecture specification nomenclature
+UserProfile = UserMeOut
 
 
 

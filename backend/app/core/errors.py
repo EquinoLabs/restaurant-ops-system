@@ -32,7 +32,9 @@ class NotFoundException(APIException):
 
 
 class NotFoundError(NotFoundException):
-    pass
+    def __init__(self, message: str = "Resource not found", code: str = "NOT_FOUND"):
+        super().__init__(code=code, message=message)
+
 
 
 class BusinessRuleException(APIException):
@@ -78,4 +80,14 @@ class InternalServerError(APIException):
             code=code,
             message=message
         )
+
+
+class ServiceUnavailableError(APIException):
+    def __init__(self, message: str = "Service temporarily unavailable", code: str = "SERVICE_UNAVAILABLE"):
+        super().__init__(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            code=code,
+            message=message
+        )
+
 

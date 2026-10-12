@@ -23,6 +23,10 @@ import {
   PlatformOverrideCreatePayload,
   PlatformOverrideRevokePayload,
   PlatformOverrideInspectionItem,
+  PlatformPlan,
+  BusinessSubscriptionItem,
+  PlatformBusinessProfileUpdatePayload,
+  PlatformOutletProfileUpdatePayload,
 } from '../types/platform';
 
 
@@ -496,6 +500,43 @@ export async function updatePlatformSubscription(
   return response.json();
 }
 
+export async function fetchPlatformPlans(token: string): Promise<PlatformPlan[]> {
+  const response = await fetch(`${API_BASE_URL}/platform/plans`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to fetch plans (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchBusinessSubscriptions(
+  businessId: string,
+  token: string
+): Promise<BusinessSubscriptionItem[]> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}/subscriptions`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const message = errData?.detail?.error?.message || `Failed to fetch business subscriptions (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 export async function fetchPlatformAdmins(token: string): Promise<PlatformAdminUser[]> {
   const response = await fetch(`${API_BASE_URL}/platform/admins`, {
     headers: {
@@ -506,8 +547,12 @@ export async function fetchPlatformAdmins(token: string): Promise<PlatformAdminU
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
     const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to fetch platform admins (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
   }
 
   return response.json();
@@ -524,8 +569,12 @@ export async function grantPlatformAdmin(userId: string, token: string): Promise
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
     const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to grant platform admin privilege (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
   }
 
   return response.json();
@@ -542,8 +591,12 @@ export async function revokePlatformAdmin(userId: string, token: string): Promis
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
     const message = (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) || `Failed to revoke platform admin privilege (${response.status})`;
-    throw new Error(message);
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
   }
 
   return response.json();
@@ -687,6 +740,115 @@ export async function revokeBusinessOverride(
       (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
       `Failed to revoke entitlement override (${response.status})`;
     throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function fetchPlatformBusiness(businessId: string, token: string): Promise<PlatformBusiness> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to fetch business details (${response.status})`;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function updatePlatformBusinessProfile(
+  businessId: string,
+  payload: PlatformBusinessProfileUpdatePayload,
+  token: string
+): Promise<PlatformBusiness> {
+  const response = await fetch(`${API_BASE_URL}/platform/businesses/${businessId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to update business profile (${response.status})`;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function fetchPlatformOutlet(
+  outletId: string,
+  token: string
+): Promise<PlatformOutlet & { business_name?: string }> {
+  const response = await fetch(`${API_BASE_URL}/platform/outlets/${outletId}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to fetch outlet details (${response.status})`;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function updatePlatformOutletProfile(
+  outletId: string,
+  payload: PlatformOutletProfileUpdatePayload,
+  token: string
+): Promise<PlatformOutlet & { business_name?: string }> {
+  const response = await fetch(`${API_BASE_URL}/platform/outlets/${outletId}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to update outlet profile (${response.status})`;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
   }
 
   return response.json();

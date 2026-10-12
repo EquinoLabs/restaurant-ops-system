@@ -5,6 +5,7 @@ import { PlatformShell } from '../features/platform-admin/PlatformShell';
 import { DashboardOverview, calculateDashboardMetrics } from '../features/platform-admin/DashboardOverview';
 import { PlatformBusiness } from '../types/platform';
 import { AuthProvider } from '../features/authentication/AuthContext';
+import * as authContext from '../features/authentication/AuthContext';
 
 describe('calculateDashboardMetrics', () => {
   const referenceDate = new Date('2026-10-10T12:00:00Z');
@@ -244,6 +245,76 @@ describe('PlatformShell Component', () => {
     fireEvent.click(toggleButton);
 
     expect(screen.getByText('Navigation Menu')).toBeDefined();
+  });
+
+  it('completely hides Platform Admins navigation tab from desktop sidebar and mobile menu when user is Operator', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      token: 'test-token',
+      user: {
+        id: 'op-1',
+        email: 'operator@platform.com',
+        display_name: 'Test Operator Account',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        memberships: [],
+      },
+      loading: false,
+      selectedOutlet: null,
+      setSelectedOutletId: vi.fn(),
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <PlatformShell activeTab="dashboard" onTabChange={vi.fn()}>
+          <div>Inner Content</div>
+        </PlatformShell>
+      </MemoryRouter>
+    );
+
+    // Platform Admins navigation entry should be completely hidden
+    expect(screen.queryByText('Platform Admins')).toBeNull();
+
+    // Other tabs should remain visible
+    expect(screen.getAllByText('Businesses & Outlets').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Subscriptions').length).toBeGreaterThan(0);
+
+    // Header badge displays Platform Operator
+    expect(screen.getByText('Platform Operator')).toBeDefined();
+  });
+
+  it('displays Platform Admins navigation tab and accurate role badge for Owner and Legacy Admin', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      token: 'test-token',
+      user: {
+        id: 'owner-1',
+        email: 'owner@platform.com',
+        display_name: 'Test Owner Account',
+        status: 'active',
+        is_platform_admin: true,
+        platform_role: 'owner',
+        memberships: [],
+      },
+      loading: false,
+      selectedOutlet: null,
+      setSelectedOutletId: vi.fn(),
+      login: vi.fn(),
+      logout: vi.fn(),
+    });
+
+    render(
+      <MemoryRouter>
+        <PlatformShell activeTab="dashboard" onTabChange={vi.fn()}>
+          <div>Inner Content</div>
+        </PlatformShell>
+      </MemoryRouter>
+    );
+
+    // Platform Admins tab is visible for Owner
+    expect(screen.getAllByText('Platform Admins').length).toBeGreaterThan(0);
+    expect(screen.getByText('Platform Owner')).toBeDefined();
   });
 });
 

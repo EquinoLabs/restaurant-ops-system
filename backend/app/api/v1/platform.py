@@ -1,20 +1,29 @@
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Union
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.api.deps import get_current_platform_admin
+from app.api.deps import (
+    get_current_user,
+    get_current_platform_admin,
+    RequirePlatformRole,
+    _assert_platform_owner_initialized,
+)
 from app.modules.staff.models import User
 from app.modules.staff.schemas import OutletMembershipOut
 from app.modules.businesses.schemas import (
     PlatformBusinessOut,
+    PlatformBusinessProfileOut,
     PlatformBusinessCreate,
     PlatformOutletOut,
     PlatformOutletCreate,
     PlatformAssignOwner,
     PlatformSubscriptionUpdate,
     PlatformAdminUserOut,
+    PlatformBusinessProfileUpdate,
+    PlatformOutletProfileUpdate,
+    PlatformOutletDetailOut,
 )
 from app.modules.businesses import platform_service
 from app.modules.subscriptions.schemas import (
@@ -23,15 +32,203 @@ from app.modules.subscriptions.schemas import (
     PlatformOverrideCreate,
     PlatformOverrideRevoke,
     PlatformOverrideInspectionItem,
+    PlanRead,
+    BusinessSubscriptionRead,
 )
 from app.modules.subscriptions.service import EntitlementService
 from app.modules.audit.schemas import PlatformAuditLogListOut, PlatformAuditLogItemOut
 from app.modules.audit import service as audit_service
+from app.api.v1.platform_menu import platform_menu_router
 
-router = APIRouter(prefix="/platform", tags=["platform-admin"], dependencies=[Depends(get_current_platform_admin)])
+
+# Explicit route-policy inventory mapping for automated verification
+IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
+    ("GET", "/api/v1/platform/audit-logs"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/admins"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/admins/{user_id}/grant"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized",
+    },
+    ("POST", "/api/v1/platform/admins/{user_id}/revoke"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, self-revocation protection, last-active-admin check",
+    },
+    ("GET", "/api/v1/platform/plans"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/businesses"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/businesses/{business_id}/subscriptions"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/businesses"): {
+        "router": "operations_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/businesses/{business_id}/subscription"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/businesses/{business_id}/outlets"): {
+        "router": "operations_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/businesses/{business_id}/assign-owner"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/businesses/{business_id}/entitlements"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/businesses/{business_id}/overrides"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/businesses/{business_id}/overrides"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("DELETE", "/api/v1/platform/businesses/{business_id}/overrides/{override_id}"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/outlets/{outlet_id}/menu"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/categories"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/categories/{category_id}"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/items"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/availability"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("DELETE", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image"): {
+        "router": "platform_menu_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/businesses/{business_id}"): {
+        "router": "profile_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/businesses/{business_id}"): {
+        "router": "operations_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("GET", "/api/v1/platform/outlets/{outlet_id}"): {
+        "router": "profile_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/outlets/{outlet_id}"): {
+        "router": "profile_router",
+        "allowed_roles": {"owner", "admin", "operator"},
+        "service_level_auth": None,
+    },
+}
+
+PLANNED_PLATFORM_ROUTE_POLICIES = {
+    ("POST", "/api/v1/platform/operators"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "decision": "DECISION-OP-01",
+    },
+    ("POST", "/api/v1/platform/owner/transfer"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "decision": "DECISION-OP-02",
+    },
+}
+
+# Sub-routers partitioned according to the ROMS Three-Tier Access Control model
+governance_router = APIRouter(
+    dependencies=[
+        Depends(_assert_platform_owner_initialized),
+        Depends(RequirePlatformRole(["owner"])),
+    ]
+)
+
+commercial_router = APIRouter(
+    dependencies=[
+        Depends(RequirePlatformRole(["owner", "admin"])),
+    ]
+)
+
+operations_router = APIRouter(
+    dependencies=[
+        Depends(RequirePlatformRole(["owner", "admin"])),
+    ]
+)
+
+profile_router = APIRouter(
+    dependencies=[
+        Depends(RequirePlatformRole(["owner", "admin", "operator"])),
+    ]
+)
 
 
-@router.get("/audit-logs", response_model=PlatformAuditLogListOut)
+# Top-level platform router (prefix mounted on /api/v1)
+router = APIRouter(prefix="/platform", tags=["platform-admin"])
+
+
+# ==============================================================================
+# Commercial Router Endpoints (owner, admin)
+# ==============================================================================
+
+@commercial_router.get("/audit-logs", response_model=PlatformAuditLogListOut)
 def list_audit_logs(
     limit: int = Query(default=50, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
@@ -68,57 +265,37 @@ def list_audit_logs(
     )
 
 
-
-@router.get("/admins", response_model=List[PlatformAdminUserOut])
+@commercial_router.get("/admins", response_model=List[PlatformAdminUserOut])
 def list_admins(db: Session = Depends(get_db)):
     users = platform_service.list_platform_admins(db)
     return [PlatformAdminUserOut.model_validate(u) for u in users]
 
 
-@router.post("/admins/{user_id}/grant", response_model=PlatformAdminUserOut)
-def grant_admin(
-    user_id: uuid.UUID,
-    current_user: User = Depends(get_current_platform_admin),
-    db: Session = Depends(get_db)
-):
-    user = platform_service.grant_platform_admin(
-        db, target_user_id=user_id, actor_user_id=current_user.id
-    )
-    return PlatformAdminUserOut.model_validate(user)
+@commercial_router.get("/plans", response_model=List[PlanRead])
+def list_plans(db: Session = Depends(get_db)):
+    plans = platform_service.list_canonical_plans(db)
+    return [PlanRead.model_validate(p) for p in plans]
 
 
-@router.post("/admins/{user_id}/revoke", response_model=PlatformAdminUserOut)
-def revoke_admin(
-    user_id: uuid.UUID,
-    current_user: User = Depends(get_current_platform_admin),
-    db: Session = Depends(get_db)
-):
-    user = platform_service.revoke_platform_admin(
-        db, target_user_id=user_id, actor_user_id=current_user.id
-    )
-    return PlatformAdminUserOut.model_validate(user)
-
-
-@router.get("/businesses", response_model=List[PlatformBusinessOut])
+@commercial_router.get("/businesses", response_model=List[PlatformBusinessOut])
 def list_businesses(db: Session = Depends(get_db)):
     return platform_service.list_platform_businesses(db)
 
 
-@router.post("/businesses", response_model=PlatformBusinessOut)
-def create_business(
-    data: PlatformBusinessCreate,
-    current_user: User = Depends(get_current_platform_admin),
+@commercial_router.get("/businesses/{business_id}/subscriptions", response_model=List[BusinessSubscriptionRead])
+def list_business_subscriptions(
+    business_id: uuid.UUID,
     db: Session = Depends(get_db)
 ):
-    biz = platform_service.create_platform_business(db, data=data, actor_user_id=current_user.id)
-    return PlatformBusinessOut.model_validate(biz)
+    subs = platform_service.list_business_subscriptions(db, business_id=business_id)
+    return [BusinessSubscriptionRead.model_validate(s) for s in subs]
 
 
-@router.patch("/businesses/{business_id}/subscription", response_model=PlatformBusinessOut)
+@commercial_router.patch("/businesses/{business_id}/subscription", response_model=PlatformBusinessOut)
 def update_subscription(
     business_id: uuid.UUID,
     data: PlatformSubscriptionUpdate,
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     biz = platform_service.update_business_subscription(
@@ -127,24 +304,11 @@ def update_subscription(
     return PlatformBusinessOut.model_validate(biz)
 
 
-@router.post("/businesses/{business_id}/outlets", response_model=PlatformOutletOut)
-def create_outlet(
-    business_id: uuid.UUID,
-    data: PlatformOutletCreate,
-    current_user: User = Depends(get_current_platform_admin),
-    db: Session = Depends(get_db)
-):
-    outlet = platform_service.add_outlet_to_business(
-        db, business_id=business_id, data=data, actor_user_id=current_user.id
-    )
-    return PlatformOutletOut.model_validate(outlet)
-
-
-@router.post("/businesses/{business_id}/assign-owner", response_model=OutletMembershipOut)
+@commercial_router.post("/businesses/{business_id}/assign-owner", response_model=OutletMembershipOut)
 def assign_owner(
     business_id: uuid.UUID,
     data: PlatformAssignOwner,
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     mem = platform_service.assign_owner_to_outlet(
@@ -160,11 +324,11 @@ def assign_owner(
     )
 
 
-@router.get("/businesses/{business_id}/entitlements", response_model=PlatformBusinessEntitlementsOut)
+@commercial_router.get("/businesses/{business_id}/entitlements", response_model=PlatformBusinessEntitlementsOut)
 def inspect_business_entitlements(
     business_id: uuid.UUID,
     outlet_id: Optional[uuid.UUID] = Query(default=None),
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return EntitlementService.inspect_all_entitlements(
@@ -174,12 +338,12 @@ def inspect_business_entitlements(
     )
 
 
-@router.get("/businesses/{business_id}/overrides", response_model=PlatformBusinessOverridesResponse)
+@commercial_router.get("/businesses/{business_id}/overrides", response_model=PlatformBusinessOverridesResponse)
 def inspect_business_overrides(
     business_id: uuid.UUID,
     include_expired: bool = Query(default=True),
     include_revoked: bool = Query(default=True),
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return EntitlementService.get_business_overrides_history(
@@ -190,11 +354,11 @@ def inspect_business_overrides(
     )
 
 
-@router.post("/businesses/{business_id}/overrides", response_model=PlatformOverrideInspectionItem)
+@commercial_router.post("/businesses/{business_id}/overrides", response_model=PlatformOverrideInspectionItem)
 def create_business_override(
     business_id: uuid.UUID,
     data: PlatformOverrideCreate,
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return EntitlementService.create_override(
@@ -205,12 +369,12 @@ def create_business_override(
     )
 
 
-@router.delete("/businesses/{business_id}/overrides/{override_id}")
+@commercial_router.delete("/businesses/{business_id}/overrides/{override_id}")
 def revoke_business_override(
     business_id: uuid.UUID,
     override_id: uuid.UUID,
     data: PlatformOverrideRevoke,
-    current_user: User = Depends(get_current_platform_admin),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     return EntitlementService.revoke_override(
@@ -220,6 +384,126 @@ def revoke_business_override(
         reason=data.reason,
         actor_user_id=current_user.id
     )
+
+
+# ==============================================================================
+# Governance Router Endpoints (owner only, fails closed 503 on zero-owner)
+# ==============================================================================
+
+@governance_router.post("/admins/{user_id}/grant", response_model=PlatformAdminUserOut)
+def grant_admin(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = platform_service.grant_platform_admin(
+        db, target_user_id=user_id, actor_user_id=current_user.id
+    )
+    return PlatformAdminUserOut.model_validate(user)
+
+
+@governance_router.post("/admins/{user_id}/revoke", response_model=PlatformAdminUserOut)
+def revoke_admin(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    user = platform_service.revoke_platform_admin(
+        db, target_user_id=user_id, actor_user_id=current_user.id
+    )
+    return PlatformAdminUserOut.model_validate(user)
+
+
+# ==============================================================================
+# Operations Router Endpoints (owner, admin)
+# ==============================================================================
+
+@operations_router.post("/businesses", response_model=PlatformBusinessOut)
+def create_business(
+    data: PlatformBusinessCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    biz = platform_service.create_platform_business(db, data=data, actor_user_id=current_user.id)
+    return PlatformBusinessOut.model_validate(biz)
+
+
+@operations_router.post("/businesses/{business_id}/outlets", response_model=PlatformOutletOut)
+def create_outlet(
+    business_id: uuid.UUID,
+    data: PlatformOutletCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    outlet = platform_service.add_outlet_to_business(
+        db, business_id=business_id, data=data, actor_user_id=current_user.id
+    )
+    return PlatformOutletOut.model_validate(outlet)
+
+
+@operations_router.patch("/businesses/{business_id}", response_model=PlatformBusinessOut)
+def update_business_profile(
+    business_id: uuid.UUID,
+    data: PlatformBusinessProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    biz = platform_service.update_business_profile(
+        db, business_id=business_id, data=data, actor_user_id=current_user.id
+    )
+    return PlatformBusinessOut.model_validate(biz)
+
+
+# ==============================================================================
+# Profile Router Endpoints (owner, admin, operator)
+# ==============================================================================
+
+@profile_router.get("/businesses/{business_id}", response_model=Union[PlatformBusinessOut, PlatformBusinessProfileOut])
+def get_business(
+    business_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    biz = platform_service.get_platform_business(db, business_id=business_id)
+    is_operator = current_user.platform_role and current_user.platform_role.strip().lower() == "operator"
+    if is_operator:
+        return PlatformBusinessProfileOut.model_validate(biz)
+    return PlatformBusinessOut.model_validate(biz)
+
+
+@profile_router.get("/outlets/{outlet_id}", response_model=PlatformOutletDetailOut)
+def get_outlet(
+    outlet_id: uuid.UUID,
+    db: Session = Depends(get_db)
+):
+    outlet = platform_service.get_platform_outlet(db, outlet_id=outlet_id)
+    out = PlatformOutletDetailOut.model_validate(outlet)
+    out.business_name = outlet.business.name if outlet.business else None
+    return out
+
+
+@profile_router.patch("/outlets/{outlet_id}", response_model=PlatformOutletDetailOut)
+def update_outlet_profile(
+    outlet_id: uuid.UUID,
+    data: PlatformOutletProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    outlet = platform_service.update_outlet_profile(
+        db, outlet_id=outlet_id, data=data, actor_user_id=current_user.id
+    )
+    out = PlatformOutletDetailOut.model_validate(outlet)
+    out.business_name = outlet.business.name if outlet.business else None
+    return out
+
+
+# Include sub-routers into the top-level platform router
+router.include_router(governance_router)
+router.include_router(commercial_router)
+router.include_router(operations_router)
+router.include_router(platform_menu_router)
+router.include_router(profile_router)
+
 
 
 

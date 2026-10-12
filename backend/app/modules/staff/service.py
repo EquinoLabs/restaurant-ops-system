@@ -61,6 +61,7 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
         display_name=user.display_name,
         status=user.status,
         is_platform_admin=user.is_platform_admin,
+        platform_role=user.platform_role,
         memberships=memberships_out
     )
 

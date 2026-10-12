@@ -1,8 +1,10 @@
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BusinessDirectory, filterBusinesses } from '../features/platform-admin/BusinessDirectory';
 import { OutletDetailDrawer } from '../features/platform-admin/OutletDetailDrawer';
 import { PlatformBusiness } from '../types/platform';
+import * as apiClient from '../api/client';
+import * as authContext from '../features/authentication/AuthContext';
 
 describe('filterBusinesses Helper Function', () => {
   const sampleBusinesses: PlatformBusiness[] = [
@@ -237,5 +239,371 @@ describe('OutletDetailDrawer Component', () => {
     );
 
     expect(screen.getByText('No outlets registered under this business yet.')).toBeDefined();
+  });
+
+  it('allows Owner or Admin to edit business name successfully', async () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-admin',
+        email: 'admin@platform.com',
+        display_name: 'Platform Admin',
+        status: 'active',
+        is_platform_admin: true,
+        platform_role: 'admin',
+        outlets: [],
+      },
+      token: 'admin-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    vi.spyOn(apiClient, 'updatePlatformBusinessProfile').mockResolvedValue({
+      ...sampleBusiness,
+      name: 'Renamed Cafe',
+    });
+
+    const handleUpdated = vi.fn();
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+        onBusinessUpdated={handleUpdated}
+      />
+    );
+
+    const editBtn = screen.getByLabelText('Edit Business Name');
+    fireEvent.click(editBtn);
+
+    const input = screen.getByLabelText('Business Name Input');
+    fireEvent.change(input, { target: { value: 'Renamed Cafe' } });
+
+    const saveBtn = screen.getByRole('button', { name: /Save/i });
+    fireEvent.click(saveBtn);
+
+    await waitFor(() => {
+      expect(apiClient.updatePlatformBusinessProfile).toHaveBeenCalledWith(
+        'biz-1',
+        { name: 'Renamed Cafe' },
+        'admin-token'
+      );
+      expect(screen.getByText('Business name updated successfully.')).toBeDefined();
+      expect(screen.getByText('Renamed Cafe')).toBeDefined();
+      expect(handleUpdated).toHaveBeenCalled();
+    });
+  });
+
+  it('restricts business name editing for Operators', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-op',
+        email: 'operator@platform.com',
+        display_name: 'Platform Operator',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        outlets: [],
+      },
+      token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByLabelText('Edit Business Name')).toBeNull();
+    expect(screen.getByText('Name locked')).toBeDefined();
+  });
+
+  it('allows Operator to edit outlet profile successfully', async () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-op',
+        email: 'operator@platform.com',
+        display_name: 'Platform Operator',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        outlets: [],
+      },
+      token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    vi.spyOn(apiClient, 'updatePlatformOutletProfile').mockResolvedValue({
+      ...sampleBusiness.outlets[0],
+      name: 'Hilltop Grand Branch',
+      address: 'New Valley Road',
+      timezone: 'Asia/Kolkata',
+      currency: 'INR',
+      primary_color: '#4F46E5',
+      accent_color: '#10B981',
+    });
+
+    const handleUpdated = vi.fn();
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+        onBusinessUpdated={handleUpdated}
+      />
+    );
+
+    const editOutletBtn = screen.getByLabelText('Edit Profile for Hilltop Branch');
+    fireEvent.click(editOutletBtn);
+
+    // Modal open
+    expect(screen.getByText('Edit Outlet Profile')).toBeDefined();
+    expect(screen.getByLabelText('Public Slug Readonly')).toBeDefined();
+
+    const nameInput = screen.getByLabelText('Outlet Name Input');
+    fireEvent.change(nameInput, { target: { value: 'Hilltop Grand Branch' } });
+
+    const addrInput = screen.getByLabelText('Physical Address Input');
+    fireEvent.change(addrInput, { target: { value: 'New Valley Road' } });
+
+    const saveChangesBtn = screen.getByRole('button', { name: /Save Changes/i });
+    fireEvent.click(saveChangesBtn);
+
+    await waitFor(() => {
+      expect(apiClient.updatePlatformOutletProfile).toHaveBeenCalledWith(
+        'o-1',
+        expect.objectContaining({
+          name: 'Hilltop Grand Branch',
+          address: 'New Valley Road',
+        }),
+        'op-token'
+      );
+      expect(screen.getByText("Outlet 'Hilltop Grand Branch' profile updated successfully.")).toBeDefined();
+      expect(screen.getByText('Hilltop Grand Branch')).toBeDefined();
+      expect(handleUpdated).toHaveBeenCalled();
+    });
+  });
+
+  it('validates outlet profile inputs before submitting', async () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-op',
+        email: 'operator@platform.com',
+        display_name: 'Platform Operator',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        outlets: [],
+      },
+      token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    const editOutletBtn = screen.getByLabelText('Edit Profile for Hilltop Branch');
+    fireEvent.click(editOutletBtn);
+
+    // 1. Invalid currency code
+    const currInput = screen.getByLabelText('Currency Code Input');
+    fireEvent.change(currInput, { target: { value: 'INVALID' } });
+
+    const saveChangesBtn = screen.getByRole('button', { name: /Save Changes/i });
+    fireEvent.click(saveChangesBtn);
+
+    expect(screen.getByText('Currency code must be a 3-letter ISO code (e.g. INR, USD).')).toBeDefined();
+
+    // 2. Fix currency, test invalid color format
+    fireEvent.change(currInput, { target: { value: 'USD' } });
+    const colorInput = screen.getByLabelText('Primary Color Input');
+    fireEvent.change(colorInput, { target: { value: 'not-hex' } });
+
+    fireEvent.click(saveChangesBtn);
+    expect(screen.getByText('Primary color must be in #RRGGBB format (e.g. #4F46E5).')).toBeDefined();
+  });
+
+  it('displays error message when outlet update fails', async () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-op',
+        email: 'operator@platform.com',
+        display_name: 'Platform Operator',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        outlets: [],
+      },
+      token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    vi.spyOn(apiClient, 'updatePlatformOutletProfile').mockRejectedValue(
+      new Error('Server failed to update outlet')
+    );
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    const editOutletBtn = screen.getByLabelText('Edit Profile for Hilltop Branch');
+    fireEvent.click(editOutletBtn);
+
+    const saveChangesBtn = screen.getByRole('button', { name: /Save Changes/i });
+    fireEvent.click(saveChangesBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText('Server failed to update outlet')).toBeDefined();
+    });
+  });
+
+  it('hides Plan Tier, Outlet Capacity, and Trial Status cards for Operators', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-op',
+        email: 'operator@platform.com',
+        display_name: 'Platform Operator',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'operator',
+        outlets: [],
+      },
+      token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    // Operator must NOT see commercial cards
+    expect(screen.queryByText('Plan Tier')).toBeNull();
+    expect(screen.queryByText('Outlet Capacity')).toBeNull();
+    expect(screen.queryByText('Trial Status')).toBeNull();
+
+    // Operational overview and outlet data remain fully visible
+    expect(screen.getByText('Created Date')).toBeDefined();
+    expect(screen.getByText('Hilltop Branch')).toBeDefined();
+    expect(screen.getByText('Associated Outlets (1)')).toBeDefined();
+  });
+
+  it('displays commercial summary cards for Owner or Admin users', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-admin',
+        email: 'admin@platform.com',
+        display_name: 'Platform Admin',
+        status: 'active',
+        is_platform_admin: true,
+        platform_role: 'admin',
+        outlets: [],
+      },
+      token: 'admin-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText('Plan Tier')).toBeDefined();
+    expect(screen.getByText('Outlet Capacity')).toBeDefined();
+    expect(screen.getByText('Trial Status')).toBeDefined();
+    expect(screen.getByText('Created Date')).toBeDefined();
+  });
+
+  it('fails closed and hides commercial summary cards when user role is missing or invalid', () => {
+    // 1. Missing user
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: null,
+      token: null,
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: false,
+      loading: false,
+    });
+
+    const { rerender } = render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('Plan Tier')).toBeNull();
+    expect(screen.queryByText('Outlet Capacity')).toBeNull();
+    expect(screen.queryByText('Trial Status')).toBeNull();
+
+    // 2. Invalid role
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-invalid',
+        email: 'invalid@platform.com',
+        display_name: 'Invalid User',
+        status: 'active',
+        is_platform_admin: false,
+        platform_role: 'unknown_role',
+        outlets: [],
+      },
+      token: 'token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    rerender(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByText('Plan Tier')).toBeNull();
+    expect(screen.queryByText('Outlet Capacity')).toBeNull();
+    expect(screen.queryByText('Trial Status')).toBeNull();
   });
 });

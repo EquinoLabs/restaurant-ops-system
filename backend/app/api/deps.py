@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.core.security import decode_access_token
-from app.core.errors import AuthenticationError, ForbiddenError
+from app.core.errors import AuthenticationError, ForbiddenError, ServiceUnavailableError
 from app.modules.staff.models import User, OutletMembership
 
 security_bearer = HTTPBearer(auto_error=False)
@@ -38,12 +38,70 @@ def get_current_user(
     return user
 
 
+class RequirePlatformRole:
+    """
+    Enforces three-tier platform role access control ('owner', 'admin', 'operator').
+    Includes legacy authorization bridge: users without platform_role (platform_role is None)
+    are treated as 'admin' if and only if is_platform_admin is True.
+    Operators and Owner are never inferred from is_platform_admin.
+    A non-null platform_role (even unsupported or empty) never falls back to is_platform_admin.
+    A conflicting legacy boolean cannot elevate a caller whose non-null role is more restrictive.
+    """
+    VALID_ROLES = {"owner", "admin", "operator"}
+
+    def __init__(self, allowed_roles: List[str]):
+        self.allowed_roles = [r.lower() for r in allowed_roles]
+
+    def __call__(
+        self,
+        current_user: User = Depends(get_current_user),
+    ) -> User:
+        if current_user.platform_role is not None:
+            normalized_role = current_user.platform_role.strip().lower()
+            if normalized_role not in self.VALID_ROLES:
+                # Non-null but unsupported platform_role is rejected; MUST NOT fall back to legacy boolean
+                raise ForbiddenError("Platform administrator privileges are required")
+            effective_role = normalized_role
+        elif current_user.is_platform_admin:
+            # Legacy authorization bridge: callers with platform_role IS NULL are treated
+            # as 'admin' if and only if is_platform_admin is True.
+            # Operators and Owner are never inferred from is_platform_admin.
+            effective_role = "admin"
+        else:
+            effective_role = None
+
+        if not effective_role or effective_role not in self.allowed_roles:
+            raise ForbiddenError("Platform administrator privileges are required")
+
+        return current_user
+
+
+
+def _assert_platform_owner_initialized(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """
+    Guards ordinary role-governance operations. Fails closed with HTTP 503
+    when no active Platform Owner exists in the system.
+    """
+    active_owner_count = (
+        db.query(User)
+        .filter(User.platform_role == "owner", User.status == "active")
+        .count()
+    )
+    if active_owner_count == 0:
+        raise ServiceUnavailableError(
+            message="Platform Owner has not been initialized. Governance operations are unavailable.",
+            code="PLATFORM_OWNER_NOT_INITIALIZED"
+        )
+
+
 def get_current_platform_admin(
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(RequirePlatformRole(["owner", "admin"]))
 ) -> User:
-    if not current_user.is_platform_admin:
-        raise ForbiddenError("Platform administrator privileges are required")
     return current_user
+
 
 
 

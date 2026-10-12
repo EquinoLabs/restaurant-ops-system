@@ -47,6 +47,22 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
     },
   ];
 
+  const isOperator = user?.platform_role === 'operator';
+  const visibleNavItems = navItems.filter((item) => {
+    if (item.id === 'admins' && isOperator) {
+      return false;
+    }
+    return true;
+  });
+
+  const roleBadgeLabel = (() => {
+    if (user?.platform_role === 'owner') return 'Platform Owner';
+    if (user?.platform_role === 'admin') return 'Platform Admin';
+    if (user?.platform_role === 'operator') return 'Platform Operator';
+    if (user?.platform_role == null && user?.is_platform_admin) return 'Platform Admin (Legacy)';
+    return 'Platform Staff';
+  })();
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans flex flex-col">
       {/* Top Header */}
@@ -68,7 +84,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
             <div>
               <span className="font-extrabold text-white text-base tracking-tight">SaaS Control Plane</span>
               <span className="ml-2 text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-md uppercase">
-                Platform Admin
+                {roleBadgeLabel}
               </span>
             </div>
           </div>
@@ -101,7 +117,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
         {/* Left Sidebar (Desktop) */}
         <aside className="hidden md:block w-64 border-r border-slate-800 p-4 shrink-0">
           <nav className="space-y-1">
-            {navItems.map((item) => {
+            {visibleNavItems.map((item) => {
               const isActive = activeTab === item.id;
               return (
                 <button
@@ -144,7 +160,7 @@ export const PlatformShell: React.FC<PlatformShellProps> = ({
               </button>
             </div>
             <nav className="mt-4 space-y-2">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const isActive = activeTab === item.id;
                 return (
                   <button

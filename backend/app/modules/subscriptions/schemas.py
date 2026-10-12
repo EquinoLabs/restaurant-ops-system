@@ -57,6 +57,8 @@ class BusinessSubscriptionRead(BaseModel):
     current_period_end: Optional[datetime] = None
     cancel_at_period_end: bool = False
     cancelled_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     plan: Optional[PlanRead] = None
 
     model_config = ConfigDict(from_attributes=True)

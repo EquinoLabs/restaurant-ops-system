@@ -13,6 +13,7 @@ export interface UserMe {
   display_name: string;
   status: string;
   is_platform_admin?: boolean;
+  platform_role?: string | null;
   memberships: OutletMembership[];
 }
 
