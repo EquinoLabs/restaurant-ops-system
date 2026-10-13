@@ -1,17 +1,32 @@
 import React from 'react';
 import { MenuItem } from '../../types/menu';
-import { Utensils, AlertCircle } from 'lucide-react';
+import { Utensils, AlertCircle, Plus, Minus } from 'lucide-react';
 
 interface MenuItemCardProps {
   item: MenuItem;
   currency: string;
+  quantity?: number;
+  onAddToCart?: (item: MenuItem) => void;
+  onIncrement?: (itemId: string) => void;
+  onDecrement?: (itemId: string) => void;
+  primaryColor?: string;
 }
 
-export const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, currency }) => {
+export const MenuItemCard: React.FC<MenuItemCardProps> = ({
+  item,
+  currency,
+  quantity = 0,
+  onAddToCart,
+  onIncrement,
+  onDecrement,
+  primaryColor,
+}) => {
   const formatPrice = (price: number, curr: string) => {
     const symbol = curr === 'INR' ? '₹' : curr;
     return `${symbol}${Number(price).toFixed(2)}`;
   };
+
+  const buttonStyle = primaryColor ? { backgroundColor: primaryColor } : undefined;
 
   return (
     <div
@@ -36,16 +51,57 @@ export const MenuItemCard: React.FC<MenuItemCardProps> = ({ item, currency }) =>
           )}
         </div>
 
-        <div className="flex items-center justify-between mt-auto">
+        <div className="flex items-center justify-between mt-auto pt-2">
           <span className="font-bold text-amber-700 text-base">
             {formatPrice(item.price, currency)}
           </span>
 
-          {!item.is_available && (
+          {!item.is_available ? (
             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
               <AlertCircle className="w-3 h-3" />
               Sold Out
             </span>
+          ) : (
+            <div>
+              {quantity === 0 ? (
+                onAddToCart && (
+                  <button
+                    onClick={() => onAddToCart(item)}
+                    style={buttonStyle}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-lg shadow-xs transition-all active:scale-95"
+                    aria-label={`Add ${item.name} to cart`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add</span>
+                  </button>
+                )
+              ) : (
+                <div className="inline-flex items-center bg-amber-50 border border-amber-200 rounded-lg p-0.5 shadow-xs">
+                  <button
+                    onClick={() => onDecrement?.(item.id)}
+                    className="w-7 h-7 flex items-center justify-center rounded-md bg-white text-amber-900 hover:bg-amber-100 shadow-2xs font-bold text-xs transition-all active:scale-90"
+                    aria-label={`Decrease ${item.name} quantity`}
+                  >
+                    <Minus className="w-3.5 h-3.5" />
+                  </button>
+                  <span
+                    className="w-7 text-center font-extrabold text-xs text-amber-950 font-mono"
+                    aria-label={`${item.name} quantity`}
+                  >
+                    {quantity}
+                  </span>
+                  <button
+                    onClick={() => onIncrement?.(item.id)}
+                    disabled={quantity >= 99}
+                    style={buttonStyle}
+                    className="w-7 h-7 flex items-center justify-center rounded-md bg-amber-600 text-white hover:bg-amber-700 shadow-2xs font-bold text-xs transition-all active:scale-90 disabled:opacity-50"
+                    aria-label={`Increase ${item.name} quantity`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

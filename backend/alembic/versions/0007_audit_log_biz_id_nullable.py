@@ -1,6 +1,6 @@
 """Make audit_logs business_id column nullable for system-wide platform operations
 
-Revision ID: 0007_audit_log_business_id_nullable
+Revision ID: 0007_audit_log_biz_id_nullable
 Revises: 0006_outlet_branding
 Create Date: 2026-10-10 05:00:00.000000
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision: str = '0007_audit_log_business_id_nullable'
+revision: str = '0007_audit_log_biz_id_nullable'
 down_revision: Union[str, None] = '0006_outlet_branding'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

@@ -1,7 +1,7 @@
 """Create order_idempotency_keys table
 
 Revision ID: 0008_order_idempotency_keys
-Revises: 0007_audit_log_business_id_nullable
+Revises: 0007_audit_log_biz_id_nullable
 Create Date: 2026-10-11 00:10:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = '0008_order_idempotency_keys'
-down_revision: Union[str, None] = '0007_audit_log_business_id_nullable'
+down_revision: Union[str, None] = '0007_audit_log_biz_id_nullable'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

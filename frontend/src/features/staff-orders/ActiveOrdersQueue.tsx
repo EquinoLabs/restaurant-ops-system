@@ -81,7 +81,7 @@ export const ActiveOrdersQueue: React.FC<ActiveOrdersQueueProps> = ({
                 </div>
 
                 <div className="mt-3 text-[11px] text-slate-400 flex justify-between">
-                  <span>Waiter: {order.waiter_name || 'Staff'}</span>
+                  <span>Waiter: {order.waiter_name || 'Customer (QR)'}</span>
                   <span>{new Date(order.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
 

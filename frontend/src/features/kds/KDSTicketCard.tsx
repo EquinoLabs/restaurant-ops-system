@@ -96,11 +96,9 @@ export const KDSTicketCard: React.FC<KDSTicketCardProps> = ({
             ) : (
               <span className="text-slate-400 italic">No Table</span>
             )}
-            {order.waiter_name && (
-              <span className="text-slate-400">
-                • Waiter: <strong className="text-slate-200">{order.waiter_name}</strong>
-              </span>
-            )}
+            <span className="text-slate-400">
+              • Waiter: <strong className="text-slate-200">{order.waiter_name || 'Customer (QR)'}</strong>
+            </span>
           </div>
         </div>
 

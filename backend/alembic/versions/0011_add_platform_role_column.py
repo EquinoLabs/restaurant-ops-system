@@ -1,7 +1,7 @@
 """Add platform_role column to users table
 
 Revision ID: 0011_add_platform_role_column
-Revises: 0010_subscription_entitlements_schema
+Revises: 0010_subscription_entitlements
 Create Date: 2026-10-12 20:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = '0011_add_platform_role_column'
-down_revision: Union[str, None] = '0010_subscription_entitlements_schema'
+down_revision: Union[str, None] = '0010_subscription_entitlements'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

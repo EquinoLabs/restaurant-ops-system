@@ -20,6 +20,8 @@ from app.modules.businesses.schemas import (
     PlatformOutletCreate,
     PlatformAssignOwner,
     PlatformSubscriptionUpdate,
+    PlatformOwnerTransferRequest,
+    PlatformOperatorCreateRequest,
     PlatformAdminUserOut,
     PlatformBusinessProfileUpdate,
     PlatformOutletProfileUpdate,
@@ -62,6 +64,26 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
         "router": "governance_router",
         "allowed_roles": {"owner"},
         "service_level_auth": "_assert_platform_owner_initialized, self-revocation protection, last-active-admin check",
+    },
+    ("POST", "/api/v1/platform/owner/transfer"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, password re-verification, active successor check",
+    },
+    ("POST", "/api/v1/platform/operators"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, Mode 1/Mode 2 mutually exclusive validation",
+    },
+    ("POST", "/api/v1/platform/operators/{user_id}/revoke"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, non-owner target check",
+    },
+    ("GET", "/api/v1/platform/operators"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
     },
     ("GET", "/api/v1/platform/plans"): {
         "router": "commercial_router",
@@ -180,18 +202,7 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
     },
 }
 
-PLANNED_PLATFORM_ROUTE_POLICIES = {
-    ("POST", "/api/v1/platform/operators"): {
-        "router": "governance_router",
-        "allowed_roles": {"owner"},
-        "decision": "DECISION-OP-01",
-    },
-    ("POST", "/api/v1/platform/owner/transfer"): {
-        "router": "governance_router",
-        "allowed_roles": {"owner"},
-        "decision": "DECISION-OP-02",
-    },
-}
+PLANNED_PLATFORM_ROUTE_POLICIES = {}
 
 # Sub-routers partitioned according to the ROMS Three-Tier Access Control model
 governance_router = APIRouter(
@@ -268,6 +279,12 @@ def list_audit_logs(
 @commercial_router.get("/admins", response_model=List[PlatformAdminUserOut])
 def list_admins(db: Session = Depends(get_db)):
     users = platform_service.list_platform_admins(db)
+    return [PlatformAdminUserOut.model_validate(u) for u in users]
+
+
+@commercial_router.get("/operators", response_model=List[PlatformAdminUserOut])
+def list_operators(db: Session = Depends(get_db)):
+    users = platform_service.list_platform_operators(db)
     return [PlatformAdminUserOut.model_validate(u) for u in users]
 
 
@@ -414,6 +431,63 @@ def revoke_admin(
     return PlatformAdminUserOut.model_validate(user)
 
 
+@governance_router.post("/owner/transfer", response_model=PlatformAdminUserOut)
+def transfer_owner(
+    data: PlatformOwnerTransferRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        successor = platform_service.transfer_platform_owner(
+            db,
+            actor_user_id=current_user.id,
+            target_user_id=data.target_user_id,
+            current_password=data.current_password,
+        )
+        db.commit()
+        db.refresh(successor)
+        return PlatformAdminUserOut.model_validate(successor)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@governance_router.post("/operators", response_model=PlatformAdminUserOut)
+def create_operator(
+    data: PlatformOperatorCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        operator = platform_service.create_platform_operator(
+            db, data=data, actor_user_id=current_user.id
+        )
+        db.commit()
+        db.refresh(operator)
+        return PlatformAdminUserOut.model_validate(operator)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@governance_router.post("/operators/{user_id}/revoke", response_model=PlatformAdminUserOut)
+def revoke_operator(
+    user_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        operator = platform_service.revoke_platform_operator(
+            db, target_user_id=user_id, actor_user_id=current_user.id
+        )
+        db.commit()
+        db.refresh(operator)
+        return PlatformAdminUserOut.model_validate(operator)
+    except Exception:
+        db.rollback()
+        raise
+
+
 # ==============================================================================
 # Operations Router Endpoints (owner, admin)
 # ==============================================================================
@@ -465,7 +539,7 @@ def get_business(
     db: Session = Depends(get_db)
 ):
     biz = platform_service.get_platform_business(db, business_id=business_id)
-    is_operator = current_user.platform_role and current_user.platform_role.strip().lower() == "operator"
+    is_operator = current_user.platform_role == "operator"
     if is_operator:
         return PlatformBusinessProfileOut.model_validate(biz)
     return PlatformBusinessOut.model_validate(biz)

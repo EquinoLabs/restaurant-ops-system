@@ -241,9 +241,10 @@ export const KDSView: React.FC = () => {
     return true;
   });
 
-  // Order counts
   const kitchenCount = orders.filter((o) => o.status === 'confirmed' || o.status === 'in_kitchen').length;
   const readyCount = orders.filter((o) => o.status === 'served').length;
+  const pendingCount = orders.filter((o) => o.status === 'pending').length;
+
 
   if (loading && orders.length === 0) {
     return (
@@ -407,6 +408,14 @@ export const KDSView: React.FC = () => {
               <span className="px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-500/20 text-amber-400 border border-amber-500/30">
                 {kitchenCount} Active Ticket{kitchenCount !== 1 ? 's' : ''}
               </span>
+              {pendingCount > 0 && (
+                <span
+                  className="px-2.5 py-0.5 rounded-full text-xs font-black bg-blue-500/20 text-blue-400 border border-blue-500/30"
+                  title="Customer orders awaiting staff confirmation"
+                >
+                  Pending ({pendingCount})
+                </span>
+              )}
             </h1>
             <p className="mt-1 text-xs text-slate-400">
               Live preparation tickets, special instructions, and bump station status

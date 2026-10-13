@@ -8,7 +8,7 @@ import {
   CategoryPayload,
   ItemPayload,
 } from '../types/adminMenu';
-import { DiningTable, Order, OrderPayload, OrderStatus } from '../types/orders';
+import { DiningTable, Order, OrderPayload, OrderStatus, PublicOrderPayload } from '../types/orders';
 import {
   PlatformBusiness,
   PlatformOutlet,
@@ -51,7 +51,49 @@ export async function fetchPublicMenu(slug: string): Promise<OutletPublicMenu> {
   return response.json();
 }
 
+export async function submitPublicOrder(
+  slug: string,
+  payload: PublicOrderPayload,
+  idempotencyKey?: string
+): Promise<Order> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  };
+
+  const effectiveKey = idempotencyKey || payload.idempotency_key;
+  if (effectiveKey) {
+    headers['X-Idempotency-Key'] = effectiveKey;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/public/outlets/${encodeURIComponent(slug)}/orders`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      ...payload,
+      ...(effectiveKey ? { idempotency_key: effectiveKey } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to submit order (${response.status})`;
+    const code = errorData?.detail?.error?.code || errorData?.detail?.code;
+    const error = new Error(typeof message === 'string' ? message : JSON.stringify(message));
+    (error as any).code = code;
+    (error as any).status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
 // --- Auth API ---
+
 
 export async function loginStaff(email: string, password: string): Promise<TokenResponse> {
   const response = await fetch(`${API_BASE_URL}/auth/login`, {

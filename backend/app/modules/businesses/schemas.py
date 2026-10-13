@@ -3,7 +3,7 @@ import re
 import zoneinfo
 from datetime import datetime, timezone
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, Field
+from pydantic import BaseModel, EmailStr, ConfigDict, field_validator, Field, model_validator
 from app.core.config import get_public_image_url
 
 
@@ -129,6 +129,57 @@ class PlatformAssignOwner(BaseModel):
     email: Optional[EmailStr] = None
     password: Optional[str] = None
     display_name: Optional[str] = None
+
+
+class PlatformOwnerTransferRequest(BaseModel):
+    target_user_id: uuid.UUID = Field(..., description="UUID of the active user receiving the Platform Owner role")
+    current_password: str = Field(..., min_length=1, description="Current password of the authenticated Platform Owner")
+
+
+class PlatformOperatorCreateRequest(BaseModel):
+    user_id: Optional[uuid.UUID] = Field(
+        default=None,
+        description="UUID of an existing active user to promote to Operator (Existing-User Mode)"
+    )
+    email: Optional[EmailStr] = Field(
+        default=None,
+        description="Email address for new Operator account (New-User Mode)"
+    )
+    password: Optional[str] = Field(
+        default=None,
+        min_length=8,
+        description="Password for new Operator account (New-User Mode)"
+    )
+    display_name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        max_length=150,
+        description="Display name for new Operator account (New-User Mode)"
+    )
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_modes(self):
+        is_existing_mode = self.user_id is not None
+        has_new_fields = (
+            (self.email is not None)
+            or (self.password is not None)
+            or (self.display_name is not None)
+        )
+
+        if is_existing_mode and has_new_fields:
+            raise ValueError(
+                "Ambiguous request: specify either 'user_id' for existing-user assignment "
+                "OR ('email', 'password', 'display_name') for new-user creation, not both."
+            )
+
+        if not is_existing_mode:
+            if not (self.email and self.password and self.display_name):
+                raise ValueError(
+                    "Incomplete request: new-user creation requires 'email', 'password', "
+                    "and 'display_name'. Alternatively, supply 'user_id' to promote an existing user."
+                )
+
+        return self
 
 
 class PlatformAdminUserOut(BaseModel):

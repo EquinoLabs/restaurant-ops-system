@@ -56,12 +56,20 @@ class RequirePlatformRole:
         self,
         current_user: User = Depends(get_current_user),
     ) -> User:
-        if current_user.platform_role is not None:
-            normalized_role = current_user.platform_role.strip().lower()
-            if normalized_role not in self.VALID_ROLES:
-                # Non-null but unsupported platform_role is rejected; MUST NOT fall back to legacy boolean
+        role = current_user.platform_role
+        if role is not None:
+            if role not in self.VALID_ROLES:
+                # Non-null but unsupported or malformed platform_role (including whitespace, casing, empty string)
+                # is rejected; MUST NOT fall back to legacy boolean
                 raise ForbiddenError("Platform administrator privileges are required")
-            effective_role = normalized_role
+
+            # Validate role-field consistency (fail closed on contradictory pairs)
+            if role in ("owner", "admin") and not current_user.is_platform_admin:
+                raise ForbiddenError("Platform administrator privileges are required")
+            if role == "operator" and current_user.is_platform_admin:
+                raise ForbiddenError("Platform administrator privileges are required")
+
+            effective_role = role
         elif current_user.is_platform_admin:
             # Legacy authorization bridge: callers with platform_role IS NULL are treated
             # as 'admin' if and only if is_platform_admin is True.

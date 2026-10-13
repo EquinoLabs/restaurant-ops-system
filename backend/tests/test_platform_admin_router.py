@@ -237,16 +237,26 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
 
 def test_bidirectional_route_policy_verification():
     # 1. Collect all platform routes registered on FastAPI app and detect duplicate registrations
+    def _walk_routes(routes, current_prefix=""):
+        flat = []
+        for r in routes:
+            if type(r).__name__ == "_IncludedRouter":
+                new_prefix = current_prefix + (r.include_context.prefix or "")
+                flat.extend(_walk_routes(r.original_router.routes, new_prefix))
+            else:
+                full_path = current_prefix + getattr(r, "path", "")
+                flat.append((r, full_path))
+        return flat
+
     route_counts = {}
     app_platform_routes = {}
-    for route in app.routes:
-        if hasattr(route, "path") and hasattr(route, "methods"):
-            if route.path.startswith("/api/v1/platform"):
-                for method in route.methods:
-                    if method in ("GET", "POST", "PATCH", "DELETE", "PUT"):
-                        key = (method, route.path)
-                        route_counts[key] = route_counts.get(key, 0) + 1
-                        app_platform_routes[key] = route
+    for route, full_path in _walk_routes(app.routes):
+        if hasattr(route, "methods") and full_path.startswith("/api/v1/platform"):
+            for method in route.methods:
+                if method in ("GET", "POST", "PATCH", "DELETE", "PUT"):
+                    key = (method, full_path)
+                    route_counts[key] = route_counts.get(key, 0) + 1
+                    app_platform_routes[key] = route
 
     # Detect duplicate route registrations
     for key, count in route_counts.items():

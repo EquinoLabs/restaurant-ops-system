@@ -87,7 +87,7 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
     setSelectedBizForDrawer(null);
   };
 
-  const renderSubscriptionBadge = (subStatus: string) => {
+  const renderSubscriptionBadge = (subStatus?: string) => {
     switch (subStatus) {
       case 'active':
         return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">Active Sub</span>;

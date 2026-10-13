@@ -11,11 +11,13 @@ from app.modules.businesses.schemas import (
     PlatformSubscriptionUpdate,
     PlatformBusinessProfileUpdate,
     PlatformOutletProfileUpdate,
+    PlatformOperatorCreateRequest,
 )
-from app.core.security import hash_password
-from app.core.errors import NotFoundError, ValidationError, ForbiddenError
+from app.core.security import hash_password, verify_password
+from app.core.errors import NotFoundError, ValidationError, ForbiddenError, AuthenticationError
 from datetime import timedelta
-from sqlalchemy import text, select
+from sqlalchemy import text, select, or_
+from sqlalchemy.exc import IntegrityError
 from app.db.base import utc_now
 from app.modules.audit.service import log_audit
 from app.modules.subscriptions.models import Plan, BusinessSubscription
@@ -830,11 +832,20 @@ def assign_owner_to_outlet(
 
 def list_platform_admins(db: Session) -> List[User]:
     """
-    Returns all users with platform administrator privileges.
+    Returns all users with platform administrator privileges according to the transitional model:
+    - Users whose platform_role is 'owner' or 'admin', provided is_platform_admin is True.
+    - Legacy users whose platform_role IS NULL and is_platform_admin IS True.
+    Excludes Operators, non-platform users, and contradictory role/boolean records.
     """
     return (
         db.query(User)
-        .filter(User.is_platform_admin == True)
+        .filter(
+            User.is_platform_admin == True,
+            or_(
+                User.platform_role.in_(["owner", "admin"]),
+                User.platform_role.is_(None),
+            )
+        )
         .order_by(User.created_at.asc())
         .all()
     )
@@ -851,6 +862,11 @@ def grant_platform_admin(
     user = db.query(User).filter(User.id == target_user_id).first()
     if not user:
         raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    if user.status != "active":
+        raise ValidationError(
+            f"Cannot grant platform administrator privileges to user with status '{user.status}'. Only active accounts can be promoted."
+        )
 
     if user.platform_role == "owner":
         return user
@@ -897,6 +913,9 @@ def revoke_platform_admin(
     if not user:
         raise NotFoundError(f"User with ID '{target_user_id}' not found.")
 
+    if user.platform_role == "owner":
+        raise ValidationError("Platform Owner privileges cannot be revoked.")
+
     if not user.is_platform_admin and user.platform_role != "admin":
         return user
 
@@ -912,9 +931,6 @@ def revoke_platform_admin(
 
     if target_user_id == actor_user_id:
         raise ValidationError("Platform administrators cannot revoke their own privileges.")
-
-    if user.platform_role == "owner":
-        raise ValidationError("Platform Owner privileges cannot be revoked.")
 
     user.is_platform_admin = False
     user.platform_role = None
@@ -938,6 +954,299 @@ def revoke_platform_admin(
     db.commit()
     db.refresh(user)
     return user
+
+
+def transfer_platform_owner(
+    db: Session,
+    actor_user_id: uuid.UUID,
+    target_user_id: uuid.UUID,
+    current_password: str,
+) -> User:
+    """
+    Transfers the Platform Owner role from the current active owner (actor) to another active user (target).
+    Demotes the departing owner to 'admin' (is_platform_admin=True) and promotes the target to 'owner' (is_platform_admin=True).
+    Follows strict caller-owned transaction semantics: executes flushes and never calls commit() or rollback().
+    """
+    # 1. Pre-lock verification: check actor credentials to minimize lock contention
+    actor = db.query(User).filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can transfer ownership.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Actor does not possess Platform Owner privileges.")
+
+    if not actor.password_hash or not verify_password(current_password, actor.password_hash):
+        raise AuthenticationError("Invalid current password for Platform Owner transfer.")
+
+    saved_password_hash = actor.password_hash
+
+    # 2. Acquire transaction serialization lock
+    _acquire_admin_serialization_lock(db)
+
+    # 3. Reload actor with populate_existing() after lock to observe any committed changes under READ COMMITTED
+    actor = db.query(User).populate_existing().filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    # 4. Revalidate actor state after lock acquisition
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can transfer ownership.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Actor does not possess Platform Owner privileges.")
+
+    # If the password hash changed while waiting for the lock, reverify the password
+    if actor.password_hash != saved_password_hash:
+        if not actor.password_hash or not verify_password(current_password, actor.password_hash):
+            raise AuthenticationError("Invalid current password for Platform Owner transfer.")
+
+    # 5. Target validations
+    if target_user_id == actor.id:
+        raise ValidationError("Cannot transfer platform ownership to yourself.")
+
+    target = db.query(User).populate_existing().filter(User.id == target_user_id).first()
+    if not target:
+        raise NotFoundError(f"Target user with ID '{target_user_id}' not found.")
+
+    if target.status != "active":
+        raise ValidationError(
+            f"Cannot transfer platform ownership to user with status '{target.status}'. Target account must be active."
+        )
+
+    # 6. Demote predecessor first to preserve ix_users_single_active_platform_owner index, then flush
+    actor.platform_role = "admin"
+    actor.is_platform_admin = True
+    db.flush()
+
+    # 7. Promote successor, then flush
+    target.platform_role = "owner"
+    target.is_platform_admin = True
+    db.flush()
+
+    # 8. Record audit log
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor.id,
+        action="platform.owner.transfer",
+        entity_type="user",
+        entity_id=target.id,
+        metadata_json={
+            "outcome": "success",
+            "predecessor_user_id": str(actor.id),
+            "predecessor_email": actor.email,
+            "successor_user_id": str(target.id),
+            "successor_email": target.email,
+            "predecessor_new_role": "admin",
+            "successor_new_role": "owner",
+        },
+    )
+
+    return target
+
+
+def create_platform_operator(
+    db: Session,
+    data: PlatformOperatorCreateRequest,
+    actor_user_id: uuid.UUID,
+) -> User:
+    """
+    Provisions a Platform Operator either by existing-user assignment (Mode 1)
+    or by new-user creation (Mode 2).
+    Requires actor to be an active Platform Owner.
+    Follows caller-owned transaction semantics: executes flushes and never calls commit() or rollback().
+    """
+    if not actor_user_id:
+        raise ValidationError("Actor user ID is required to provision a platform operator.")
+
+    # 1. Acquire transaction serialization lock
+    _acquire_admin_serialization_lock(db)
+
+    # 2. Reload actor with populate_existing() and revalidate active Owner role
+    actor = db.query(User).populate_existing().filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can provision operators.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Platform Owner privileges are required to provision operators.")
+
+    # 3. Branching: Mode 1 (Existing User) vs Mode 2 (New User)
+    if data.user_id is not None:
+        # --- Mode 1: Existing-User Assignment ---
+        target = db.query(User).populate_existing().filter(User.id == data.user_id).first()
+        if not target:
+            raise NotFoundError(f"Target user with ID '{data.user_id}' not found.")
+
+        if target.status != "active":
+            raise ValidationError(
+                f"Cannot assign Operator role to user with status '{target.status}'. Only active accounts can be assigned."
+            )
+
+        if target.platform_role == "owner":
+            raise ValidationError("Platform Owner cannot be demoted to Operator. Transfer platform ownership first.")
+
+        # Idempotency check: if already an active operator, safe no-op
+        if target.platform_role == "operator" and not target.is_platform_admin:
+            return target
+
+        previous_role = target.platform_role
+        target.platform_role = "operator"
+        target.is_platform_admin = False
+        db.flush()
+
+        log_audit(
+            db=db,
+            business_id=None,
+            outlet_id=None,
+            actor_user_id=actor.id,
+            action="platform.operator.create",
+            entity_type="user",
+            entity_id=target.id,
+            metadata_json={
+                "outcome": "success",
+                "mode": "existing_user",
+                "target_user_id": str(target.id),
+                "target_email": target.email,
+                "previous_role": previous_role,
+                "new_role": "operator",
+            },
+        )
+        return target
+
+    else:
+        # --- Mode 2: New-User Creation ---
+        clean_email = data.email.strip().lower()
+
+        # Reject if email already exists in users (instruct caller to use existing-user assignment)
+        existing_user = db.query(User).populate_existing().filter(User.email == clean_email).first()
+        if existing_user:
+            raise ValidationError(
+                f"A user with email '{clean_email}' already exists. "
+                f"To assign this user as an Operator, use existing-user assignment mode with user_id '{existing_user.id}'."
+            )
+
+        new_user = User(
+            email=clean_email,
+            display_name=data.display_name.strip(),
+            password_hash=hash_password(data.password),
+            status="active",
+            is_platform_admin=False,
+            platform_role="operator",
+        )
+        db.add(new_user)
+        try:
+            db.flush()
+        except IntegrityError as e:
+            raise ValidationError(
+                f"A user with email '{clean_email}' already exists."
+            ) from e
+
+        log_audit(
+            db=db,
+            business_id=None,
+            outlet_id=None,
+            actor_user_id=actor.id,
+            action="platform.operator.create",
+            entity_type="user",
+            entity_id=new_user.id,
+            metadata_json={
+                "outcome": "success",
+                "mode": "new_user",
+                "target_user_id": str(new_user.id),
+                "target_email": new_user.email,
+                "previous_role": None,
+                "new_role": "operator",
+            },
+        )
+        return new_user
+
+
+def revoke_platform_operator(
+    db: Session,
+    target_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+) -> User:
+    """
+    Revokes the Platform Operator role from a user, setting platform_role to None and is_platform_admin to False.
+    Preserves account status (e.g. active, suspended) and all tenant memberships intact.
+    Requires actor to be an active Platform Owner.
+    Follows caller-owned transaction semantics: executes flushes and never calls commit() or rollback().
+    """
+    if not actor_user_id:
+        raise ValidationError("Actor user ID is required to revoke platform operator privileges.")
+
+    # 1. Acquire transaction serialization lock
+    _acquire_admin_serialization_lock(db)
+
+    # 2. Reload actor with populate_existing() and revalidate active Owner role
+    actor = db.query(User).populate_existing().filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can revoke operators.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Platform Owner privileges are required to revoke operators.")
+
+    # 3. Reload target user with populate_existing()
+    target = db.query(User).populate_existing().filter(User.id == target_user_id).first()
+    if not target:
+        raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    if target.platform_role == "owner":
+        raise ValidationError("Platform Owner privileges cannot be revoked.")
+
+    # Idempotency check: if not currently an operator, safe no-op (no mutation, no audit log)
+    if target.platform_role != "operator":
+        return target
+
+    # 4. Atomic role mutation: clear platform role, leave status and memberships untouched
+    target.platform_role = None
+    target.is_platform_admin = False
+    db.flush()
+
+    # 5. Record audit log
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor.id,
+        action="platform.operator.revoke",
+        entity_type="user",
+        entity_id=target.id,
+        metadata_json={
+            "outcome": "success",
+            "target_user_id": str(target.id),
+            "target_email": target.email,
+        },
+    )
+
+    return target
+
+
+def list_platform_operators(db: Session) -> List[User]:
+    """
+    Returns all users with valid platform operator status according to the model:
+    platform_role == 'operator' and is_platform_admin is False.
+    Excludes contradictory pairs and non-operators.
+    """
+    return (
+        db.query(User)
+        .filter(
+            User.platform_role == "operator",
+            User.is_platform_admin == False,
+        )
+        .order_by(User.created_at.asc())
+        .all()
+    )
 
 
 def get_platform_business(db: Session, business_id: uuid.UUID) -> Business:

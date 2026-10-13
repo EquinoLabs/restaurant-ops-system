@@ -1,23 +1,39 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
-import { fetchPublicMenu } from '../../api/client';
-import { OutletPublicMenu } from '../../types/menu';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { fetchPublicMenu, submitPublicOrder } from '../../api/client';
+import { OutletPublicMenu, MenuItem } from '../../types/menu';
+import { CartItem, Order, PublicOrderPayload } from '../../types/orders';
 import { CategorySection } from './CategorySection';
 import { MenuSkeleton } from './MenuSkeleton';
 import { NotFoundView } from './NotFoundView';
 import { Error500View } from './Error500View';
-import { Search, MapPin, Sparkles, QrCode, Download, X } from 'lucide-react';
+import { CartBottomBar } from './CartBottomBar';
+import { CartDrawer } from './CartDrawer';
+import { OrderConfirmationModal } from './OrderConfirmationModal';
+import { Search, MapPin, Sparkles, QrCode, Download, X, UtensilsCrossed, ShoppingBag } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
 
 export const PublicMenuView: React.FC = () => {
   const { publicSlug } = useParams<{ publicSlug: string }>();
+  const [searchParams] = useSearchParams();
+  const tableParam = searchParams.get('table')?.trim() || null;
+
   const [menuData, setMenuData] = useState<OutletPublicMenu | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [activeCategoryId, setActiveCategoryId] = useState<string | null>(null);
   const [showQrModal, setShowQrModal] = useState<boolean>(false);
+
+  // Cart & Order state
+  const [cart, setCart] = useState<Record<string, CartItem>>({});
+  const [isCartOpen, setIsCartOpen] = useState<boolean>(false);
+  const [orderNotes, setOrderNotes] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [confirmedOrder, setConfirmedOrder] = useState<Order | null>(null);
+  const [inFlightIdempotencyKey, setInFlightIdempotencyKey] = useState<string | null>(null);
 
   const loadMenu = useCallback(() => {
     if (!publicSlug) {
@@ -66,6 +82,139 @@ export const PublicMenuView: React.FC = () => {
       .filter((cat) => cat.items.length > 0);
   }, [menuData, searchQuery]);
 
+  // Cart helpers & computed values
+  const cartItems = useMemo(() => Object.values(cart), [cart]);
+
+  const cartQuantities = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const item of cartItems) {
+      counts[item.menu_item_id] = item.quantity;
+    }
+    return counts;
+  }, [cartItems]);
+
+  const totalItemsCount = useMemo(() => {
+    return cartItems.reduce((acc, curr) => acc + curr.quantity, 0);
+  }, [cartItems]);
+
+  const totalEstimatedAmount = useMemo(() => {
+    return cartItems.reduce((acc, curr) => acc + curr.price * curr.quantity, 0);
+  }, [cartItems]);
+
+  const handleAddToCart = (item: MenuItem) => {
+    setCart((prev) => ({
+      ...prev,
+      [item.id]: {
+        menu_item_id: item.id,
+        name: item.name,
+        price: item.price,
+        quantity: 1,
+        special_instructions: '',
+        image_url: item.image_url,
+      },
+    }));
+    setInFlightIdempotencyKey(null);
+  };
+
+  const handleIncrement = (itemId: string) => {
+    setCart((prev) => {
+      const existing = prev[itemId];
+      if (!existing || existing.quantity >= 99) return prev;
+      return {
+        ...prev,
+        [itemId]: { ...existing, quantity: existing.quantity + 1 },
+      };
+    });
+    setInFlightIdempotencyKey(null);
+  };
+
+  const handleDecrement = (itemId: string) => {
+    setCart((prev) => {
+      const existing = prev[itemId];
+      if (!existing) return prev;
+      if (existing.quantity <= 1) {
+        const updated = { ...prev };
+        delete updated[itemId];
+        return updated;
+      }
+      return {
+        ...prev,
+        [itemId]: { ...existing, quantity: existing.quantity - 1 },
+      };
+    });
+    setInFlightIdempotencyKey(null);
+  };
+
+  const handleRemoveItem = (itemId: string) => {
+    setCart((prev) => {
+      const updated = { ...prev };
+      delete updated[itemId];
+      return updated;
+    });
+    setInFlightIdempotencyKey(null);
+  };
+
+  const handleUpdateInstructions = (itemId: string, instructions: string) => {
+    setCart((prev) => {
+      const existing = prev[itemId];
+      if (!existing) return prev;
+      return {
+        ...prev,
+        [itemId]: { ...existing, special_instructions: instructions },
+      };
+    });
+    setInFlightIdempotencyKey(null);
+  };
+
+  const handleClearCart = () => {
+    setCart({});
+    setOrderNotes('');
+    setInFlightIdempotencyKey(null);
+    setSubmitError(null);
+  };
+
+  const handleSubmitOrder = async () => {
+    if (!publicSlug || cartItems.length === 0 || isSubmitting) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    // Reuse existing in-flight idempotency key on retry, or generate a fresh UUID
+    const key =
+      inFlightIdempotencyKey ||
+      (typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : 'idemp-' + Date.now() + '-' + Math.random().toString(36).substring(2, 9));
+    setInFlightIdempotencyKey(key);
+
+    const payload: PublicOrderPayload = {
+      table_number: tableParam || null,
+      order_type: tableParam ? 'dine_in' : 'takeaway',
+      items: cartItems.map((item) => ({
+        menu_item_id: item.menu_item_id,
+        quantity: item.quantity,
+        special_instructions: item.special_instructions?.trim() || null,
+      })),
+      notes: orderNotes.trim() || null,
+      idempotency_key: key,
+    };
+
+    try {
+      const order = await submitPublicOrder(publicSlug, payload, key);
+      setConfirmedOrder(order);
+      setCart({});
+      setOrderNotes('');
+      setIsCartOpen(false);
+      setInFlightIdempotencyKey(null);
+      setSubmitError(null);
+    } catch (err: any) {
+      // Retain customer's cart on error for easy retry
+      setSubmitError(err.message || 'Failed to place order. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   if (loading) return <MenuSkeleton />;
   if (error === 'OUTLET_NOT_FOUND') {
     return <NotFoundView />;
@@ -88,7 +237,7 @@ export const PublicMenuView: React.FC = () => {
   const primaryColor = menuData.primary_color || '#d97706'; // default amber-600
 
   return (
-    <div className="max-w-md mx-auto min-h-screen bg-gray-50 pb-12 antialiased relative">
+    <div className="max-w-md mx-auto min-h-screen bg-gray-50 pb-28 antialiased relative">
       {/* Cover Image Banner (Optional Outlet Branding) */}
       {menuData.cover_image_url && (
         <div className="h-36 w-full relative bg-slate-900 overflow-hidden">
@@ -102,9 +251,11 @@ export const PublicMenuView: React.FC = () => {
       )}
 
       {/* Outlet Header */}
-      <header className={`bg-white border-b border-gray-100 p-5 sticky top-0 z-20 shadow-xs ${
-        menuData.cover_image_url ? '-mt-6 rounded-t-2xl relative z-30 shadow-md' : ''
-      }`}>
+      <header
+        className={`bg-white border-b border-gray-100 p-5 sticky top-0 z-20 shadow-xs ${
+          menuData.cover_image_url ? '-mt-6 rounded-t-2xl relative z-30 shadow-md' : ''
+        }`}
+      >
         <div className="flex items-start justify-between mb-2">
           <div className="flex items-center gap-3">
             {menuData.logo_url && (
@@ -115,7 +266,10 @@ export const PublicMenuView: React.FC = () => {
               />
             )}
             <div>
-              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider" style={{ color: primaryColor }}>
+              <div
+                className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider"
+                style={{ color: primaryColor }}
+              >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Digital Menu</span>
               </div>
@@ -125,14 +279,37 @@ export const PublicMenuView: React.FC = () => {
             </div>
           </div>
 
-          <button
-            onClick={() => setShowQrModal(true)}
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg border border-amber-200/80 transition-all flex-shrink-0 mt-1"
-            title="View permanent table QR code"
-          >
-            <QrCode className="w-3.5 h-3.5 text-amber-600" />
-            <span>QR Stand</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Table / Takeaway Context Badge */}
+            {tableParam ? (
+              <div
+                data-testid="header-table-badge"
+                className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-800 text-xs font-bold rounded-lg border border-emerald-200 shadow-2xs mt-1"
+                title={`Serving Table ${tableParam}`}
+              >
+                <UtensilsCrossed className="w-3.5 h-3.5 text-emerald-600" />
+                <span>Table {tableParam}</span>
+              </div>
+            ) : (
+              <div
+                data-testid="header-takeaway-badge"
+                className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-800 text-xs font-bold rounded-lg border border-blue-200 shadow-2xs mt-1"
+                title="Self Pickup / Takeaway"
+              >
+                <ShoppingBag className="w-3.5 h-3.5 text-blue-600" />
+                <span>Takeaway</span>
+              </div>
+            )}
+
+            <button
+              onClick={() => setShowQrModal(true)}
+              className="inline-flex items-center gap-1.5 px-2 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-medium rounded-lg border border-amber-200/80 transition-all flex-shrink-0 mt-1"
+              title="View permanent table QR code"
+            >
+              <QrCode className="w-3.5 h-3.5 text-amber-600" />
+              <span className="hidden xs:inline">QR Stand</span>
+            </button>
+          </div>
         </div>
 
         {menuData.address && (
@@ -190,6 +367,11 @@ export const PublicMenuView: React.FC = () => {
               key={category.id}
               category={category}
               currency={menuData.currency}
+              cartQuantities={cartQuantities}
+              onAddToCart={handleAddToCart}
+              onIncrement={handleIncrement}
+              onDecrement={handleDecrement}
+              primaryColor={primaryColor}
             />
           ))
         )}
@@ -199,6 +381,44 @@ export const PublicMenuView: React.FC = () => {
       <footer className="text-center py-6 border-t border-gray-200/60 text-xs text-gray-400">
         Powered by <span className="font-semibold text-gray-600">ROMS Digital Menu</span>
       </footer>
+
+      {/* Sticky Bottom Cart Bar */}
+      <CartBottomBar
+        totalItems={totalItemsCount}
+        totalAmount={totalEstimatedAmount}
+        currency={menuData.currency}
+        onOpenCart={() => setIsCartOpen(true)}
+        primaryColor={primaryColor}
+      />
+
+      {/* Expandable Cart Drawer */}
+      <CartDrawer
+        isOpen={isCartOpen}
+        onClose={() => setIsCartOpen(false)}
+        items={cartItems}
+        currency={menuData.currency}
+        tableNumber={tableParam}
+        onIncrement={handleIncrement}
+        onDecrement={handleDecrement}
+        onRemoveItem={handleRemoveItem}
+        onUpdateInstructions={handleUpdateInstructions}
+        orderNotes={orderNotes}
+        onChangeOrderNotes={setOrderNotes}
+        onClearCart={handleClearCart}
+        onSubmitOrder={handleSubmitOrder}
+        isSubmitting={isSubmitting}
+        submitError={submitError}
+        onClearError={() => setSubmitError(null)}
+        primaryColor={primaryColor}
+      />
+
+      {/* Order Confirmation Screen */}
+      <OrderConfirmationModal
+        order={confirmedOrder}
+        currency={menuData.currency}
+        onClose={() => setConfirmedOrder(null)}
+        primaryColor={primaryColor}
+      />
 
       {/* QR Code Printable Modal */}
       {showQrModal && (

@@ -57,3 +57,26 @@ export interface OrderPayload {
   items: OrderItemPayload[];
   notes?: string | null;
 }
+
+export interface PublicOrderItemPayload {
+  menu_item_id: string;
+  quantity: number;
+  special_instructions?: string | null;
+}
+
+export interface PublicOrderPayload {
+  table_number?: string | null;
+  order_type?: string | null;
+  items: PublicOrderItemPayload[];
+  notes?: string | null;
+  idempotency_key?: string | null;
+}
+
+export interface CartItem {
+  menu_item_id: string;
+  name: string;
+  price: number;
+  quantity: number;
+  special_instructions?: string;
+  image_url?: string | null;
+}

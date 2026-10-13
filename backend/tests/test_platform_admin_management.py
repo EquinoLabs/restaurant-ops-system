@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.staff.models import User
 from app.modules.audit.models import AuditLog
+from app.core.errors import ValidationError
 from scripts.create_platform_admin import promote_user_to_platform_admin
 
 
@@ -108,11 +109,33 @@ def test_grant_and_revoke_platform_admin_flow(client: TestClient, db_session: Se
     assert db_session.query(AuditLog).filter(AuditLog.action == "platform.admin.revoke").count() == 1
 
 
-def test_last_active_platform_admin_protection(client: TestClient, db_session: Session):
-    # Only staff@test.com is active platform owner/admin
+def test_last_active_platform_admin_protection(db_session: Session):
+    from app.modules.businesses.platform_service import revoke_platform_admin
+    # Only staff@test.com is active platform admin (not owner)
     admin = db_session.query(User).filter(User.email == "staff@test.com").first()
     admin.is_platform_admin = True
-    admin.platform_role = "owner"
+    admin.platform_role = "admin"
+    db_session.commit()
+
+    actor_id = uuid.uuid4()
+    with pytest.raises(ValidationError) as exc_info:
+        revoke_platform_admin(db_session, target_user_id=admin.id, actor_user_id=actor_id)
+    assert "last active platform administrator" in str(exc_info.value)
+
+    # Verify NO revoke audit log was created
+    revoke_log = db_session.query(AuditLog).filter(AuditLog.action == "platform.admin.revoke").first()
+    assert revoke_log is None
+
+    # Verify user remains platform admin
+    db_session.refresh(admin)
+    assert admin.is_platform_admin is True
+
+
+def test_revoke_sole_active_owner_rejected(client: TestClient, db_session: Session):
+    # Sole active platform user is an Owner
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
     db_session.commit()
 
     login_resp = client.post(
@@ -122,18 +145,19 @@ def test_last_active_platform_admin_protection(client: TestClient, db_session: S
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Attempt self-revoke when only 1 active admin remains
-    revoke_resp = client.post(f"/api/v1/platform/admins/{admin.id}/revoke", headers=headers)
+    # Attempt revoke on the Owner: Owner protection fires before last-active-admin check
+    revoke_resp = client.post(f"/api/v1/platform/admins/{owner.id}/revoke", headers=headers)
     assert revoke_resp.status_code == 422
-    assert "last active platform administrator" in revoke_resp.json()["detail"]["error"]["message"]
+    assert "Platform Owner privileges cannot be revoked" in revoke_resp.json()["detail"]["error"]["message"]
 
     # Verify NO revoke audit log was created
     revoke_log = db_session.query(AuditLog).filter(AuditLog.action == "platform.admin.revoke").first()
     assert revoke_log is None
 
-    # Verify user remains platform admin
-    db_session.refresh(admin)
-    assert admin.is_platform_admin is True
+    # Verify user remains platform owner
+    db_session.refresh(owner)
+    assert owner.is_platform_admin is True
+    assert owner.platform_role == "owner"
 
 
 def test_nonexistent_user_grant_revoke_fails(client: TestClient, db_session: Session):
@@ -173,7 +197,8 @@ def test_serialization_lock_helper_executes_without_error(db_session: Session):
     _acquire_admin_serialization_lock(db_session)
 
 
-def test_self_revocation_rejected_when_multiple_admins_exist(client: TestClient, db_session: Session):
+def test_self_revocation_rejected_when_multiple_admins_exist(db_session: Session):
+    from app.modules.businesses.platform_service import revoke_platform_admin
     # Setup two active platform admins: admin1 as owner, admin2 as admin
     admin1 = db_session.query(User).filter(User.email == "staff@test.com").first()
     admin1.is_platform_admin = True
@@ -183,28 +208,20 @@ def test_self_revocation_rejected_when_multiple_admins_exist(client: TestClient,
     admin2.platform_role = "admin"
     db_session.commit()
 
-    # Login as admin1
-    login_resp = client.post(
-        "/api/v1/auth/login",
-        json={"email": "staff@test.com", "password": "password123"},
-    )
-    token = login_resp.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-
-    # admin1 attempts to self-revoke
-    revoke_resp = client.post(f"/api/v1/platform/admins/{admin1.id}/revoke", headers=headers)
-    assert revoke_resp.status_code == 422
-    assert "cannot revoke their own privileges" in revoke_resp.json()["detail"]["error"]["message"].lower()
+    # admin2 attempts to self-revoke at service level
+    with pytest.raises(ValidationError) as exc_info:
+        revoke_platform_admin(db_session, target_user_id=admin2.id, actor_user_id=admin2.id)
+    assert "cannot revoke their own privileges" in str(exc_info.value).lower()
 
     # Verify user remains platform admin
-    db_session.refresh(admin1)
-    assert admin1.is_platform_admin is True
+    db_session.refresh(admin2)
+    assert admin2.is_platform_admin is True
 
     # Verify NO audit log was generated for rejected self-revocation
     revoke_log = db_session.query(AuditLog).filter(
         AuditLog.action == "platform.admin.revoke",
-        AuditLog.actor_user_id == admin1.id,
-        AuditLog.entity_id == admin1.id
+        AuditLog.actor_user_id == admin2.id,
+        AuditLog.entity_id == admin2.id
     ).first()
     assert revoke_log is None
 
@@ -529,5 +546,268 @@ def test_legacy_admin_revocation_clears_access(client: TestClient, db_session: S
     assert client.get("/api/v1/platform/businesses", headers=headers).status_code == 403
 
 
+def test_list_platform_admins_transitional_filtering(db_session: Session):
+    from app.modules.businesses.platform_service import list_platform_admins
 
+    # 1. Consistent Owner
+    u_owner = User(
+        email="owner_test@example.com",
+        password_hash="fakehash",
+        display_name="Owner User",
+        status="active",
+        is_platform_admin=True,
+        platform_role="owner",
+    )
+    # 2. Consistent Admin
+    u_admin = User(
+        email="admin_test@example.com",
+        password_hash="fakehash",
+        display_name="Admin User",
+        status="active",
+        is_platform_admin=True,
+        platform_role="admin",
+    )
+    # 3. Legacy Admin (True, None)
+    u_legacy = User(
+        email="legacy_test@example.com",
+        password_hash="fakehash",
+        display_name="Legacy Admin",
+        status="active",
+        is_platform_admin=True,
+        platform_role=None,
+    )
+    # 4. Consistent Operator (False, 'operator')
+    u_operator = User(
+        email="operator_test@example.com",
+        password_hash="fakehash",
+        display_name="Operator User",
+        status="active",
+        is_platform_admin=False,
+        platform_role="operator",
+    )
+    # 5. Regular User (False, None)
+    u_regular = User(
+        email="regular_test@example.com",
+        password_hash="fakehash",
+        display_name="Regular User",
+        status="active",
+        is_platform_admin=False,
+        platform_role=None,
+    )
+    # 6. Contradictory Operator (True, 'operator')
+    u_contra_op = User(
+        email="contra_op@example.com",
+        password_hash="fakehash",
+        display_name="Contradictory Operator",
+        status="active",
+        is_platform_admin=True,
+        platform_role="operator",
+    )
+    # 7. Contradictory Admin (False, 'admin')
+    u_contra_admin = User(
+        email="contra_admin@example.com",
+        password_hash="fakehash",
+        display_name="Contradictory Admin",
+        status="active",
+        is_platform_admin=False,
+        platform_role="admin",
+    )
+    # 8. Contradictory Owner (False, 'owner')
+    u_contra_owner = User(
+        email="contra_owner@example.com",
+        password_hash="fakehash",
+        display_name="Contradictory Owner",
+        status="active",
+        is_platform_admin=False,
+        platform_role="owner",
+    )
+    db_session.add_all([
+        u_owner, u_admin, u_legacy, u_operator, u_regular,
+        u_contra_op, u_contra_admin, u_contra_owner
+    ])
+    db_session.commit()
+
+    admins = list_platform_admins(db_session)
+    admin_emails = {u.email for u in admins}
+
+    # Must include: consistent Owner, consistent Admin, legacy Admin
+    assert "owner_test@example.com" in admin_emails
+    assert "admin_test@example.com" in admin_emails
+    assert "legacy_test@example.com" in admin_emails
+
+    # Must NOT include: Operator, regular user, or contradictory pairs
+    assert "operator_test@example.com" not in admin_emails
+    assert "regular_test@example.com" not in admin_emails
+    assert "contra_op@example.com" not in admin_emails
+    assert "contra_admin@example.com" not in admin_emails
+    assert "contra_owner@example.com" not in admin_emails
+
+
+def test_owner_protection_precedence_over_last_active_admin(db_session: Session):
+    from app.modules.businesses.platform_service import revoke_platform_admin
+    # Ensure ONLY one active admin exists and it is an Owner
+    users = db_session.query(User).all()
+    for u in users:
+        u.is_platform_admin = False
+        u.platform_role = None
+    db_session.commit()
+
+    sole_owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    sole_owner.is_platform_admin = True
+    sole_owner.platform_role = "owner"
+    sole_owner.status = "active"
+    db_session.commit()
+
+    # Active admins count is exactly 1 (<= 1)
+    # If last-active-admin check ran first, it would raise "Cannot revoke ... last active platform administrator"
+    # Because Owner check runs first, it must raise "Platform Owner privileges cannot be revoked."
+    with pytest.raises(ValidationError) as exc_info:
+        revoke_platform_admin(db_session, target_user_id=sole_owner.id, actor_user_id=uuid.uuid4())
+    assert "Platform Owner privileges cannot be revoked" in str(exc_info.value)
+    assert "last active" not in str(exc_info.value).lower()
+
+
+def test_advisory_lock_helper_postgres_and_sqlite_behavior(db_session: Session):
+    from unittest.mock import MagicMock
+    from app.modules.businesses.platform_service import (
+        _acquire_admin_serialization_lock,
+        ADMIN_PRIVILEGE_LOCK_KEY,
+    )
+
+    # 1. SQLite dialect skips PG-specific lock SQL without error
+    assert db_session.bind.dialect.name == "sqlite"
+    _acquire_admin_serialization_lock(db_session)
+
+    # 2. Mock PostgreSQL dialect executes the intended pg_advisory_xact_lock
+    mock_db = MagicMock()
+    mock_db.bind.dialect.name = "postgresql"
+    _acquire_admin_serialization_lock(mock_db)
+    mock_db.execute.assert_called_once()
+    executed_sql = str(mock_db.execute.call_args[0][0])
+    assert "pg_advisory_xact_lock" in executed_sql
+    params = mock_db.execute.call_args[0][1]
+    assert params["key"] == ADMIN_PRIVILEGE_LOCK_KEY
+    assert params["key"] == 424242111
+
+
+def test_grant_platform_admin_rejects_non_active_users(db_session: Session):
+    from app.modules.businesses.platform_service import grant_platform_admin
+
+    admin = db_session.query(User).filter(User.email == "staff@test.com").first()
+    admin.is_platform_admin = True
+    admin.platform_role = "owner"
+    admin.status = "active"
+
+    target = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    target.is_platform_admin = False
+    target.platform_role = None
+    target.status = "suspended"
+    db_session.commit()
+
+    # 1. Suspended user is rejected with ValidationError
+    with pytest.raises(ValidationError) as exc_info:
+        grant_platform_admin(db_session, target_user_id=target.id, actor_user_id=admin.id)
+    assert "Cannot grant platform administrator privileges to user with status 'suspended'" in str(exc_info.value)
+    assert "Only active accounts can be promoted" in str(exc_info.value)
+
+    db_session.refresh(target)
+    assert target.is_platform_admin is False
+    assert target.platform_role is None
+
+    # 2. Inactive / pending user is rejected with ValidationError
+    target.status = "inactive"
+    db_session.commit()
+
+    with pytest.raises(ValidationError) as exc_info:
+        grant_platform_admin(db_session, target_user_id=target.id, actor_user_id=admin.id)
+    assert "Cannot grant platform administrator privileges to user with status 'inactive'" in str(exc_info.value)
+    assert "Only active accounts can be promoted" in str(exc_info.value)
+
+    db_session.refresh(target)
+    assert target.is_platform_admin is False
+    assert target.platform_role is None
+
+    # 3. Active user succeeds
+    target.status = "active"
+    db_session.commit()
+
+    promoted = grant_platform_admin(db_session, target_user_id=target.id, actor_user_id=admin.id)
+    assert promoted.is_platform_admin is True
+    assert promoted.platform_role == "admin"
+
+
+def test_grant_platform_admin_api_rejects_suspended_user(client: TestClient, db_session: Session):
+    owner = db_session.query(User).filter(User.email == "staff@test.com").first()
+    owner.is_platform_admin = True
+    owner.platform_role = "owner"
+    owner.status = "active"
+
+    target = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    target.is_platform_admin = False
+    target.platform_role = None
+    target.status = "suspended"
+    db_session.commit()
+
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "staff@test.com", "password": "password123"},
+    )
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Attempting to grant admin to suspended user returns HTTP 422 (ValidationError mapping in ROMS) / 400
+    grant_resp = client.post(f"/api/v1/platform/admins/{target.id}/grant", headers=headers)
+    assert grant_resp.status_code in (400, 422)
+    err_msg = grant_resp.json()["detail"]["error"]["message"]
+    assert "Cannot grant platform administrator privileges to user with status 'suspended'" in err_msg
+    assert "Only active accounts can be promoted" in err_msg
+
+    # Verify target user was not modified in DB
+    db_session.refresh(target)
+    assert target.is_platform_admin is False
+    assert target.platform_role is None
+    assert target.status == "suspended"
+
+
+def test_grant_platform_admin_rejects_suspended_preexisting_admin(db_session: Session):
+    from app.modules.businesses.platform_service import grant_platform_admin
+
+    admin = db_session.query(User).filter(User.email == "staff@test.com").first()
+    admin.is_platform_admin = True
+    admin.platform_role = "owner"
+    admin.status = "active"
+
+    # Set up the target user explicitly as a suspended pre-existing Admin
+    target = db_session.query(User).filter(User.email == "unauth@test.com").first()
+    target.is_platform_admin = True
+    target.platform_role = "admin"
+    target.status = "suspended"
+    db_session.commit()
+
+    initial_audit_count = db_session.query(AuditLog).filter(
+        AuditLog.action == "platform.admin.grant",
+        AuditLog.entity_id == target.id,
+    ).count()
+
+    # 1. Raises expected ValidationError; no successful idempotent return occurs
+    with pytest.raises(ValidationError) as exc_info:
+        grant_platform_admin(db_session, target_user_id=target.id, actor_user_id=admin.id)
+    assert "Cannot grant platform administrator privileges to user with status 'suspended'" in str(exc_info.value)
+    assert "Only active accounts can be promoted" in str(exc_info.value)
+
+    # 2. Target remains status == "suspended"
+    # 3. Target remains is_platform_admin is True
+    # 4. Target remains platform_role == "admin"
+    db_session.refresh(target)
+    assert target.status == "suspended"
+    assert target.is_platform_admin is True
+    assert target.platform_role == "admin"
+
+    # 5-6. No unintended mutation or audit event representing a successful grant is produced
+    final_audit_count = db_session.query(AuditLog).filter(
+        AuditLog.action == "platform.admin.grant",
+        AuditLog.entity_id == target.id,
+    ).count()
+    assert final_audit_count == initial_audit_count
 
