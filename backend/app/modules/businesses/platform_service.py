@@ -1249,6 +1249,158 @@ def list_platform_operators(db: Session) -> List[User]:
     )
 
 
+def suspend_platform_user(
+    db: Session,
+    target_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+) -> User:
+    """
+    Safely suspends a platform user (sets status to 'suspended').
+    Preserves account data, platform roles, and tenant memberships intact.
+    Immediately prevents authentication and API access.
+    Requires actor to be an active Platform Owner.
+    Platform Owners cannot be suspended.
+    Users cannot suspend their own account.
+    Safe idempotent no-op if user is already suspended.
+    Follows caller-owned transaction semantics: executes flushes and never calls commit() or rollback().
+    """
+    if not actor_user_id:
+        raise ValidationError("Actor user ID is required to suspend a platform user.")
+
+    # 1. Acquire transaction serialization lock
+    _acquire_admin_serialization_lock(db)
+
+    # 2. Reload actor with populate_existing() and revalidate active Owner role
+    actor = db.query(User).populate_existing().filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can suspend users.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Platform Owner privileges are required to suspend users.")
+
+    # 3. Self-suspension prevention
+    if target_user_id == actor.id:
+        raise ValidationError("You cannot suspend your own account.")
+
+    # 4. Target retrieval and validation
+    target = db.query(User).populate_existing().filter(User.id == target_user_id).first()
+    if not target:
+        raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    # 5. Owner protection check
+    if target.platform_role == "owner":
+        raise ValidationError("Platform Owner cannot be suspended.")
+
+    # 6. Idempotency check: if already suspended, return target without mutation or audit log
+    if target.status == "suspended":
+        return target
+
+    # Validate target status transition
+    if target.status != "active":
+        raise ValidationError(f"Cannot suspend user with status '{target.status}'.")
+
+    # 7. Atomic status mutation: suspend user, leaving roles and memberships untouched
+    target.status = "suspended"
+    db.flush()
+
+    # 8. Record audit log
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor.id,
+        action="platform.user.suspend",
+        entity_type="user",
+        entity_id=target.id,
+        metadata_json={
+            "outcome": "success",
+            "target_user_id": str(target.id),
+            "target_email": target.email,
+            "previous_status": "active",
+            "new_status": "suspended",
+            "platform_role": target.platform_role,
+        },
+    )
+
+    return target
+
+
+def reactivate_platform_user(
+    db: Session,
+    target_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+) -> User:
+    """
+    Safely reactivates a suspended platform user (sets status to 'active').
+    Restores login and access capability without altering platform roles, tenant memberships, or permissions.
+    Requires actor to be an active Platform Owner.
+    Users cannot reactivate their own account.
+    Safe idempotent no-op if user is already active.
+    Follows caller-owned transaction semantics: executes flushes and never calls commit() or rollback().
+    """
+    if not actor_user_id:
+        raise ValidationError("Actor user ID is required to reactivate a platform user.")
+
+    # 1. Acquire transaction serialization lock
+    _acquire_admin_serialization_lock(db)
+
+    # 2. Reload actor with populate_existing() and revalidate active Owner role
+    actor = db.query(User).populate_existing().filter(User.id == actor_user_id).first()
+    if not actor:
+        raise NotFoundError(f"Actor user with ID '{actor_user_id}' not found.")
+
+    if actor.status != "active":
+        raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can reactivate users.")
+
+    if actor.platform_role != "owner" or not actor.is_platform_admin:
+        raise ForbiddenError("Platform Owner privileges are required to reactivate users.")
+
+    # 3. Self-reactivation prevention
+    if target_user_id == actor.id:
+        raise ValidationError("You cannot reactivate your own account.")
+
+    # 4. Target retrieval and validation
+    target = db.query(User).populate_existing().filter(User.id == target_user_id).first()
+    if not target:
+        raise NotFoundError(f"User with ID '{target_user_id}' not found.")
+
+    # 5. Idempotency check: if already active, return target without mutation or audit log
+    if target.status == "active":
+        return target
+
+    # Validate target status transition
+    if target.status != "suspended":
+        raise ValidationError(f"Cannot reactivate user with status '{target.status}'.")
+
+    # 6. Atomic status mutation: activate user, leaving roles and memberships untouched
+    target.status = "active"
+    db.flush()
+
+    # 7. Record audit log
+    log_audit(
+        db=db,
+        business_id=None,
+        outlet_id=None,
+        actor_user_id=actor.id,
+        action="platform.user.reactivate",
+        entity_type="user",
+        entity_id=target.id,
+        metadata_json={
+            "outcome": "success",
+            "target_user_id": str(target.id),
+            "target_email": target.email,
+            "previous_status": "suspended",
+            "new_status": "active",
+            "platform_role": target.platform_role,
+        },
+    )
+
+    return target
+
+
 def get_platform_business(db: Session, business_id: uuid.UUID) -> Business:
     """
     Returns single business details with preloaded outlets.

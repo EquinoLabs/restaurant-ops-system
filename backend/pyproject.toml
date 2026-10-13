@@ -28,3 +28,11 @@ dev = [
     "pytest>=8.0.0",
     "httpx>=0.27.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+markers = [
+    "postgres_integration: PostgreSQL multi-connection concurrency and constraint tests (opt-in via --pg-integration)"
+]
+

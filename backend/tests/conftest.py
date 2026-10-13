@@ -205,3 +205,130 @@ def client(db_session):
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+# ==============================================================================
+# PostgreSQL Concurrency & Integration Test Fixtures (Opt-in via --pg-integration)
+# ==============================================================================
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--pg-integration",
+        action="store_true",
+        default=False,
+        help="Run PostgreSQL multi-connection concurrency and constraint integration tests.",
+    )
+
+
+def pytest_configure(config):
+    """
+    Early configuration validation hook for PostgreSQL integration testing.
+    If --pg-integration is provided, validates environment variable presence and format
+    immediately at test session start, exiting with a single clear refusal message rather
+    than producing multiple repetitive fixture setup failures.
+    """
+    if config.getoption("--pg-integration", default=False):
+        import os
+        from tests.postgres_guard import validate_postgres_test_url, ConfigurationError
+        url = os.environ.get("ROMS_POSTGRES_TEST_DATABASE_URL")
+        try:
+            validate_postgres_test_url(url)
+        except ConfigurationError as exc:
+            import pytest
+            pytest.exit(
+                f"\n[ROMS-GUARD-REFUSAL] PostgreSQL Integration Testing Refused:\n"
+                f"{exc}\n"
+                f"Aborting test session immediately before any fixture execution.\n",
+                returncode=1
+            )
+
+
+def pytest_collection_modifyitems(config, items):
+    if not config.getoption("--pg-integration"):
+        skip_pg = pytest.mark.skip(
+            reason="Pass --pg-integration to run PostgreSQL integration tests."
+        )
+        for item in items:
+            if "postgres_integration" in item.keywords:
+                item.add_marker(skip_pg)
+
+
+@pytest.fixture(scope="session")
+def pg_target(request):
+    """
+    Session-scoped target resolver. Validates configuration only when --pg-integration is provided.
+    Fails closed immediately if missing, invalid, or matching application DATABASE_URL.
+    """
+    if not request.config.getoption("--pg-integration"):
+        pytest.skip("Pass --pg-integration to run PostgreSQL integration tests.")
+
+    import os
+    from tests.postgres_guard import validate_postgres_test_url
+    url = os.environ.get("ROMS_POSTGRES_TEST_DATABASE_URL")
+    return validate_postgres_test_url(url)
+
+
+@pytest.fixture(scope="session")
+def pg_engine(pg_target):
+    """
+    Session-scoped engine factory. Verifies target identity before creating pool.
+    Guarantees raw driver exceptions are sanitized and raw credentials are never printed.
+    """
+    from tests.postgres_guard import (
+        verify_disposable_test_target,
+        verify_migration_dag_head,
+        sanitize_error_message,
+        TargetVerificationRefusal,
+    )
+    import sqlalchemy as sa
+
+    verify_migration_dag_head()
+
+    engine = sa.create_engine(
+        pg_target.raw_url,
+        pool_size=10,
+        max_overflow=5,
+        pool_pre_ping=True,
+    )
+    try:
+        with engine.connect() as conn:
+            verify_disposable_test_target(conn, pg_target)
+    except Exception as exc:
+        safe_msg = sanitize_error_message(str(exc), pg_target)
+        raise TargetVerificationRefusal(
+            f"Failed to establish verified connection to test database: {safe_msg}"
+        ) from None
+
+    yield engine
+    engine.dispose()
+
+
+
+@pytest.fixture(scope="function")
+def pg_connection_pair(pg_engine):
+    """
+    Yields two independent physical connections to PostgreSQL with statement timeouts set to 5s,
+    and guarantees automatic rollback and closure upon test completion.
+    """
+    import sqlalchemy as sa
+
+    conn1 = pg_engine.connect()
+    conn2 = pg_engine.connect()
+
+    conn1.execute(sa.text("SET statement_timeout = '5000ms';"))
+    conn2.execute(sa.text("SET statement_timeout = '5000ms';"))
+
+    try:
+        yield conn1, conn2
+    finally:
+        try:
+            conn1.rollback()
+        except Exception:
+            pass
+        try:
+            conn2.rollback()
+        except Exception:
+            pass
+        conn1.close()
+        conn2.close()
+

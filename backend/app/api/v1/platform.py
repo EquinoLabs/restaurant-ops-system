@@ -80,6 +80,16 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
         "allowed_roles": {"owner"},
         "service_level_auth": "_assert_platform_owner_initialized, non-owner target check",
     },
+    ("POST", "/api/v1/platform/users/{id}/suspend"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, non-owner target check, self-suspension check",
+    },
+    ("POST", "/api/v1/platform/users/{id}/reactivate"): {
+        "router": "governance_router",
+        "allowed_roles": {"owner"},
+        "service_level_auth": "_assert_platform_owner_initialized, self-reactivation check",
+    },
     ("GET", "/api/v1/platform/operators"): {
         "router": "commercial_router",
         "allowed_roles": {"owner", "admin"},
@@ -483,6 +493,42 @@ def revoke_operator(
         db.commit()
         db.refresh(operator)
         return PlatformAdminUserOut.model_validate(operator)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@governance_router.post("/users/{id}/suspend", response_model=PlatformAdminUserOut)
+def suspend_user(
+    id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        user = platform_service.suspend_platform_user(
+            db, target_user_id=id, actor_user_id=current_user.id
+        )
+        db.commit()
+        db.refresh(user)
+        return PlatformAdminUserOut.model_validate(user)
+    except Exception:
+        db.rollback()
+        raise
+
+
+@governance_router.post("/users/{id}/reactivate", response_model=PlatformAdminUserOut)
+def reactivate_user(
+    id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        user = platform_service.reactivate_platform_user(
+            db, target_user_id=id, actor_user_id=current_user.id
+        )
+        db.commit()
+        db.refresh(user)
+        return PlatformAdminUserOut.model_validate(user)
     except Exception:
         db.rollback()
         raise
