@@ -167,3 +167,57 @@ class RequireEntitlement:
         return result
 
 
+class RequireBusinessOwner:
+    """
+    Dependency that enforces owner-level access for business-scoped endpoints (OP-05).
+    - Requires an authenticated, active User.
+    - Resolves business ownership from active OutletMembership records where role == 'owner'.
+    - If optional business_id query parameter is provided, verifies caller is an owner of that specific business.
+    - Fails closed if caller has no owner memberships (403 Forbidden).
+    - Fails closed if the business is suspended (403 Forbidden).
+    - Returns the resolved Business entity.
+    """
+    def __call__(
+        self,
+        business_id: Optional[uuid.UUID] = None,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ):
+        from app.modules.businesses.models import Business
+        from app.modules.outlets.models import Outlet
+
+        owner_memberships = (
+            db.query(OutletMembership)
+            .join(Outlet, OutletMembership.outlet_id == Outlet.id)
+            .join(Business, Outlet.business_id == Business.id)
+            .filter(
+                OutletMembership.user_id == current_user.id,
+                OutletMembership.role == "owner"
+            )
+            .all()
+        )
+
+        if not owner_memberships:
+            raise ForbiddenError("You are not authorized as an owner of this business")
+
+        owned_businesses = {}
+        for m in owner_memberships:
+            if m.outlet and m.outlet.business:
+                owned_businesses[m.outlet.business.id] = m.outlet.business
+
+        if not owned_businesses:
+            raise ForbiddenError("No associated business found for your owner account")
+
+        if business_id is not None:
+            if business_id not in owned_businesses:
+                raise ForbiddenError("You are not authorized as an owner of the requested business")
+            target_business = owned_businesses[business_id]
+        else:
+            target_business = next(iter(owned_businesses.values()))
+
+        if target_business.status != "active":
+            raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
+
+        return target_business
+
+

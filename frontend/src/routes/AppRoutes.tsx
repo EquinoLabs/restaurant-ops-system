@@ -8,6 +8,7 @@ import { MenuAdminView } from '../features/menu-admin/MenuAdminView';
 import { StaffOrdersView } from '../features/staff-orders/StaffOrdersView';
 import { PlatformAdminView } from '../features/platform-admin/PlatformAdminView';
 import { KDSView } from '../features/kds/KDSView';
+import { SubscriptionSummaryView } from '../features/subscription/SubscriptionSummaryView';
 import { ProtectedRoute } from './ProtectedRoute';
 import { RequirePlatformAdmin } from './RequirePlatformAdmin';
 
@@ -69,6 +70,14 @@ export const AppRoutes: React.FC = () => {
         element={
           <ProtectedRoute>
             <MenuAdminView />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/admin/subscription"
+        element={
+          <ProtectedRoute>
+            <SubscriptionSummaryView />
           </ProtectedRoute>
         }
       />

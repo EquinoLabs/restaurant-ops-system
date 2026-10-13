@@ -28,6 +28,7 @@ import {
   PlatformBusinessProfileUpdatePayload,
   PlatformOutletProfileUpdatePayload,
 } from '../types/platform';
+import { OwnerSubscriptionSummary } from '../types/subscription';
 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1';
@@ -887,6 +888,32 @@ export async function updatePlatformOutletProfile(
     const message =
       (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
       `Failed to update outlet profile (${response.status})`;
+    const error = new Error(message) as Error & { status?: number; code?: string };
+    error.status = response.status;
+    error.code = code;
+    throw error;
+  }
+
+  return response.json();
+}
+
+
+// --- Owner Subscription Self-Inspection (OP-05) ---
+
+export async function fetchOwnerSubscriptionSummary(token: string): Promise<OwnerSubscriptionSummary> {
+  const response = await fetch(`${API_BASE_URL}/business/subscription`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => ({}));
+    const code = errData?.detail?.error?.code;
+    const message =
+      (typeof errData?.detail === 'string' ? errData.detail : errData?.detail?.error?.message) ||
+      `Failed to load subscription summary (${response.status})`;
     const error = new Error(message) as Error & { status?: number; code?: string };
     error.status = response.status;
     error.code = code;

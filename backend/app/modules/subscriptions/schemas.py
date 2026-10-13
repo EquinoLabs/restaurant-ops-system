@@ -175,3 +175,52 @@ class PlatformOverrideRevoke(BaseModel):
     reason: str = Field(..., min_length=1, max_length=500)
 
 
+# --- Owner Subscription Self-Inspection (OP-05) Schemas ---
+
+class OwnerPlanSummary(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+
+
+class OwnerSubscriptionDetail(BaseModel):
+    status: str
+    is_current: bool
+    trial_ends_at: Optional[datetime] = None
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+
+
+class OwnerOutletUsage(BaseModel):
+    current_count: int
+    max_allowed: Optional[int] = None
+    is_limit_reached: bool = False
+
+
+class OwnerFeatureItem(BaseModel):
+    code: str
+    name: str
+    category: str
+    authorized: bool
+    limit_value: Optional[int] = None
+
+
+class OwnerSupportAction(BaseModel):
+    requires_action: bool = False
+    reason: Optional[str] = None
+    support_email: str = "support@roms.com"
+    message: Optional[str] = None
+
+
+class OwnerSubscriptionSummaryOut(BaseModel):
+    business_id: uuid.UUID
+    business_name: str
+    business_status: str
+    plan: OwnerPlanSummary
+    subscription: OwnerSubscriptionDetail
+    outlets: OwnerOutletUsage
+    features: List[OwnerFeatureItem]
+    support_cta: OwnerSupportAction
+
+

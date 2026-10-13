@@ -797,4 +797,209 @@ class EntitlementService:
         db.commit()
         return {"status": "success", "message": f"Override '{override_id}' revoked successfully."}
 
+    @classmethod
+    def get_owner_subscription_summary(
+        cls,
+        db: Session,
+        business_id: uuid.UUID,
+        now: Optional[datetime] = None
+    ):
+        from app.core.errors import NotFoundError
+        from app.modules.outlets.models import Outlet
+        from app.modules.subscriptions.schemas import (
+            OwnerSubscriptionSummaryOut,
+            OwnerPlanSummary,
+            OwnerSubscriptionDetail,
+            OwnerOutletUsage,
+            OwnerFeatureItem,
+            OwnerSupportAction,
+        )
+
+        if now is None:
+            now = utc_now()
+        now = ensure_utc(now)
+
+        business = db.scalar(select(Business).where(Business.id == business_id))
+        if not business:
+            raise NotFoundError(f"Business with ID '{business_id}' not found.")
+
+        # Query active subscription
+        sub = db.scalar(
+            select(BusinessSubscription)
+            .where(
+                and_(
+                    BusinessSubscription.business_id == business_id,
+                    BusinessSubscription.is_current == True
+                )
+            )
+            .options(joinedload(BusinessSubscription.plan))
+        )
+
+        if sub:
+            resolved_status = cls.evaluate_subscription_status(sub, now)
+            effective_plan_id = sub.plan_id
+            effective_plan_active = sub.plan.is_active if sub.plan else True
+            plan_code = sub.plan.code if sub.plan else "unknown"
+            plan_name = sub.plan.name if sub.plan else "Unknown"
+            plan_desc = sub.plan.description if sub.plan else None
+            is_current = sub.is_current
+            trial_ends_at = sub.trial_ends_at
+            current_period_start = sub.current_period_start
+            current_period_end = sub.current_period_end
+            cancel_at_period_end = sub.cancel_at_period_end
+        else:
+            sub_status = business.subscription_status or "active"
+            if sub_status == "trial" and business.trial_ends_at and now >= ensure_utc(business.trial_ends_at):
+                resolved_status = "expired"
+            elif sub_status in ("active", "trial"):
+                resolved_status = sub_status
+            else:
+                resolved_status = "expired"
+
+            PLAN_MAP = {
+                'starter': 'starter_pos',
+                'growth': 'growth_pos',
+                'pro': 'pro_kds',
+                'enterprise': 'enterprise',
+                'digital_menu': 'free_qr',
+                'free': 'free_qr',
+            }
+            raw_plan = business.plan_name.lower() if business.plan_name else ""
+            default_code = "growth_pos" if (business.max_outlets is None or business.max_outlets > 1) else "starter_pos"
+            target_code = PLAN_MAP.get(raw_plan, default_code)
+            fallback_plan = db.scalar(select(Plan).where(Plan.code == target_code))
+            effective_plan_id = fallback_plan.id if fallback_plan else None
+            effective_plan_active = fallback_plan.is_active if fallback_plan else True
+            plan_code = fallback_plan.code if fallback_plan else (business.plan_name or "none")
+            plan_name = fallback_plan.name if fallback_plan else (business.plan_name or "No Plan Assigned")
+            plan_desc = fallback_plan.description if fallback_plan else None
+            is_current = True
+            trial_ends_at = business.trial_ends_at
+            current_period_start = None
+            current_period_end = None
+            cancel_at_period_end = False
+
+        # Outlet usage & limit
+        current_outlet_count = db.query(Outlet).filter(Outlet.business_id == business_id).count()
+        outlet_entitlement = cls.check_entitlement(
+            db=db,
+            business_id=business_id,
+            feature_code="outlets.max_count",
+            now=now
+        )
+        max_allowed_outlets = outlet_entitlement.limit_value
+        is_limit_reached = (max_allowed_outlets is not None and current_outlet_count >= max_allowed_outlets)
+
+        # Batch load catalog features
+        all_features = list(db.scalars(select(Feature).order_by(Feature.category, Feature.code)).all())
+
+        # Pre-load plan features dict
+        plan_features_dict = {}
+        if effective_plan_id and effective_plan_active:
+            pfs = db.scalars(
+                select(PlanFeature)
+                .join(Feature, PlanFeature.feature_id == Feature.id)
+                .where(PlanFeature.plan_id == effective_plan_id)
+            ).all()
+            for pf in pfs:
+                plan_features_dict[pf.feature.code] = pf.limit_value
+
+        # Pre-load active overrides
+        all_overrides = list(db.scalars(
+            select(EntitlementOverride).where(EntitlementOverride.business_id == business_id)
+        ).all())
+
+        active_restrictions = [
+            r for r in all_overrides
+            if r.override_type == "restrict"
+            and (r.expires_at is None or ensure_utc(r.expires_at) > now)
+        ]
+        active_grants = [
+            g for g in all_overrides
+            if g.override_type == "grant"
+            and (g.expires_at is None or ensure_utc(g.expires_at) > now)
+        ]
+
+        feature_items = []
+        for feat in all_features:
+            eval_res = cls._evaluate_feature_entitlement(
+                business=business,
+                resolved_status=resolved_status,
+                effective_plan_id=effective_plan_id,
+                effective_plan_active=effective_plan_active,
+                feature_code=feat.code,
+                plan_features_dict=plan_features_dict,
+                active_restrictions=active_restrictions,
+                active_grants=active_grants,
+                outlet_id=None,
+                now=now
+            )
+            feature_items.append(
+                OwnerFeatureItem(
+                    code=feat.code,
+                    name=feat.name,
+                    category=feat.category,
+                    authorized=eval_res.authorized,
+                    limit_value=eval_res.limit_value
+                )
+            )
+
+        # Support CTA derivation
+        is_trial_expired = (resolved_status == "expired")
+        
+        if is_trial_expired and is_limit_reached:
+            support_cta = OwnerSupportAction(
+                requires_action=True,
+                reason="TRIAL_EXPIRED_AND_OUTLET_LIMIT_REACHED",
+                support_email="support@roms.com",
+                message=f"Your trial has expired and you have reached your outlet limit of {max_allowed_outlets}. Please contact support@roms.com to upgrade your plan."
+            )
+        elif is_trial_expired:
+            support_cta = OwnerSupportAction(
+                requires_action=True,
+                reason="TRIAL_EXPIRED",
+                support_email="support@roms.com",
+                message="Your trial has expired. Please contact support@roms.com to upgrade your subscription."
+            )
+        elif is_limit_reached:
+            support_cta = OwnerSupportAction(
+                requires_action=True,
+                reason="OUTLET_LIMIT_REACHED",
+                support_email="support@roms.com",
+                message=f"You have reached your limit of {max_allowed_outlets} outlet(s). Contact support@roms.com to add more outlets."
+            )
+        else:
+            support_cta = OwnerSupportAction(
+                requires_action=False,
+                reason=None,
+                support_email="support@roms.com",
+                message=None
+            )
+
+        return OwnerSubscriptionSummaryOut(
+            business_id=business.id,
+            business_name=business.name,
+            business_status=business.status,
+            plan=OwnerPlanSummary(
+                code=plan_code,
+                name=plan_name,
+                description=plan_desc
+            ),
+            subscription=OwnerSubscriptionDetail(
+                status=resolved_status,
+                is_current=is_current,
+                trial_ends_at=trial_ends_at,
+                current_period_start=current_period_start,
+                current_period_end=current_period_end,
+                cancel_at_period_end=cancel_at_period_end
+            ),
+            outlets=OwnerOutletUsage(
+                current_count=current_outlet_count,
+                max_allowed=max_allowed_outlets,
+                is_limit_reached=is_limit_reached
+            ),
+            features=feature_items,
+            support_cta=support_cta
+        )
+
 

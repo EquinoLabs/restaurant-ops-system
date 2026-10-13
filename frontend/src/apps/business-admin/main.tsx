@@ -5,6 +5,7 @@ import { AuthProvider } from '../../features/authentication/AuthContext';
 import { LoginForm } from '../../features/authentication/LoginForm';
 import { MenuAdminView } from '../../features/menu-admin/MenuAdminView';
 import { StaffOrdersView } from '../../features/staff-orders/StaffOrdersView';
+import { SubscriptionSummaryView } from '../../features/subscription/SubscriptionSummaryView';
 import { ProtectedRoute } from '../../routes/ProtectedRoute';
 import { NotFoundView } from '../../features/public-menu/NotFoundView';
 import '../../index.css';
@@ -22,6 +23,15 @@ export const BusinessAdminApp: React.FC = () => {
             element={
               <ProtectedRoute>
                 <MenuAdminView />
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/admin/subscription"
+            element={
+              <ProtectedRoute>
+                <SubscriptionSummaryView />
               </ProtectedRoute>
             }
           />
