@@ -44,6 +44,7 @@ class ParsedPostgresTestTarget:
     port: int
     database: str
     run_id: Optional[str] = None
+    is_neon: bool = False
 
 
 FORBIDDEN_NAME_TOKENS: Set[str] = {
@@ -55,6 +56,13 @@ EXPECTED_ROOT_MIGRATION: str = "0001_initial_r1_schema"
 HARNESS_MARKER_TABLE: str = "roms_disposable_test_marker"
 HARNESS_MARKER_VERSION: str = "ROMS-OP02"
 BOOTSTRAP_CONFIRMATION_TOKEN: str = "CONFIRM_INITIALIZE_EMPTY_TEST_DATABASE"
+
+# Authorized Neon Safety Branch Target Configuration (OP-02)
+NEON_EXPECTED_PROJECT_ID: str = "steep-hall-47922907"
+NEON_EXPECTED_BRANCH_ID: str = "br-weathered-cherry-b34085w9"
+NEON_FORBIDDEN_SOURCE_BRANCH_ID: str = "br-fancy-scene-b38p0d9u"
+NEON_EXPECTED_ENDPOINT_ID: str = "ep-lucky-band-b3tbsmfz"
+NEON_EXPECTED_DATABASE: str = "neondb"
 
 
 def redact_dsn(dsn: Optional[str]) -> str:
@@ -148,6 +156,9 @@ def validate_postgres_test_url(
     raw_scheme = parsed.scheme.lower()
     if raw_scheme in ("postgres", "postgresql"):
         normalized_scheme = "postgresql+psycopg"
+        clean_url = clean_url.replace(f"{parsed.scheme}://", f"{normalized_scheme}://", 1)
+        redacted = redacted.replace(f"{parsed.scheme}://", f"{normalized_scheme}://", 1)
+        parsed = urlparse(clean_url)
     elif raw_scheme in ("postgresql+psycopg", "postgresql+psycopg_async"):
         normalized_scheme = raw_scheme
     else:
@@ -175,12 +186,50 @@ def validate_postgres_test_url(
                 "Tests cannot target production or staging databases."
             )
 
-    if expected_run_id is None:
-        env_run_id = os.environ.get("ROMS_POSTGRES_TEST_RUN_ID")
-        if env_run_id and env_run_id.strip():
-            expected_run_id = env_run_id.strip()
-    elif expected_run_id:
-        expected_run_id = expected_run_id.strip() or None
+    is_neon = "neon.tech" in host.lower()
+    if is_neon:
+        # Source branch protection: fail closed if forbidden source branch appears anywhere in URL
+        if NEON_FORBIDDEN_SOURCE_BRANCH_ID.lower() in clean_url.lower():
+            raise ConfigurationError(
+                f"Configuration refusal: Target URL contains forbidden source branch "
+                f"'{NEON_FORBIDDEN_SOURCE_BRANCH_ID}'. Test execution against the source branch is strictly forbidden."
+            )
+
+        # Direct endpoint normalization: strip -pooler to prevent connection pooler interference
+        if "-pooler" in host.lower():
+            direct_host = host.replace("-pooler", "")
+            clean_url = clean_url.replace(host, direct_host)
+            redacted = redacted.replace(host, direct_host)
+            host = direct_host
+            parsed = urlparse(clean_url)
+
+        # Authorized endpoint check
+        if not host.lower().startswith(NEON_EXPECTED_ENDPOINT_ID.lower()):
+            raise ConfigurationError(
+                f"Configuration refusal: Neon host '{host}' does not match authorized "
+                f"endpoint '{NEON_EXPECTED_ENDPOINT_ID}'. Execution refused."
+            )
+
+        if db_name.lower() != NEON_EXPECTED_DATABASE.lower():
+            raise ConfigurationError(
+                f"Configuration refusal: Neon target database '{db_name}' does not match "
+                f"expected database '{NEON_EXPECTED_DATABASE}'."
+            )
+
+    env_run_id = os.environ.get("ROMS_POSTGRES_TEST_RUN_ID")
+    env_run_id = env_run_id.strip() if env_run_id and env_run_id.strip() else None
+
+    clean_expected_run_id = expected_run_id.strip() if expected_run_id and expected_run_id.strip() else None
+
+    # Mismatch check: fail closed if explicit argument contradicts environment variable
+    if clean_expected_run_id and env_run_id and clean_expected_run_id != env_run_id:
+        raise ConfigurationError(
+            f"Configuration refusal: Explicit run ID '{clean_expected_run_id}' mismatches "
+            f"ROMS_POSTGRES_TEST_RUN_ID environment variable '{env_run_id}'. "
+            "Refusing execution with conflicting correlation identifiers."
+        )
+
+    resolved_run_id = clean_expected_run_id or env_run_id
 
     return ParsedPostgresTestTarget(
         raw_url=clean_url,
@@ -190,7 +239,8 @@ def validate_postgres_test_url(
         host=host,
         port=port,
         database=db_name,
-        run_id=expected_run_id,
+        run_id=resolved_run_id,
+        is_neon=is_neon,
     )
 
 
@@ -269,6 +319,98 @@ def verify_migration_dag_head(
         )
 
 
+def verify_neon_safety_branch_target(
+    connection: sa.Connection,
+    target: ParsedPostgresTestTarget
+) -> None:
+    """
+    Positive target identity verification for the authorized Neon safety branch.
+    Validates project, branch, and endpoint against PostgreSQL settings.
+    Guarantees 100% isolation from the source branch and verifies schema head.
+    """
+    try:
+        # 1. Database name check
+        server_db = connection.execute(text("SELECT current_database()")).scalar()
+        if not server_db or server_db.lower() != NEON_EXPECTED_DATABASE.lower():
+            raise TargetVerificationRefusal(
+                f"Target database identity mismatch: Connected to database '{server_db}', "
+                f"expected '{NEON_EXPECTED_DATABASE}'. Aborting."
+            )
+
+        # 2. Neon-specific system settings verification
+        project_id = connection.execute(text("SELECT current_setting('neon.project_id', true)")).scalar()
+        if not project_id or str(project_id).strip() != NEON_EXPECTED_PROJECT_ID:
+            raise TargetVerificationRefusal(
+                f"Neon project identity mismatch: Connected to project '{project_id}', "
+                f"expected '{NEON_EXPECTED_PROJECT_ID}'. Aborting."
+            )
+
+        branch_id = connection.execute(text("SELECT current_setting('neon.branch_id', true)")).scalar()
+        if branch_id == NEON_FORBIDDEN_SOURCE_BRANCH_ID:
+            raise TargetVerificationRefusal(
+                f"CRITICAL SAFETY VIOLATION: Connected to forbidden source branch '{branch_id}'. "
+                "Aborting immediately to protect production data."
+            )
+        if not branch_id or str(branch_id).strip() != NEON_EXPECTED_BRANCH_ID:
+            raise TargetVerificationRefusal(
+                f"Neon branch identity mismatch: Connected to branch '{branch_id}', "
+                f"expected safety branch '{NEON_EXPECTED_BRANCH_ID}'. Aborting."
+            )
+
+        endpoint_id = connection.execute(text("SELECT current_setting('neon.endpoint_id', true)")).scalar()
+        if not endpoint_id or str(endpoint_id).strip() != NEON_EXPECTED_ENDPOINT_ID:
+            raise TargetVerificationRefusal(
+                f"Neon endpoint identity mismatch: Connected to endpoint '{endpoint_id}', "
+                f"expected '{NEON_EXPECTED_ENDPOINT_ID}'. Aborting."
+            )
+
+        # 3. Direct endpoint verification (ensure no pooler routing)
+        if "-pooler" in target.host.lower():
+            raise TargetVerificationRefusal(
+                f"Target endpoint refusal: Host '{target.host}' is a pooled endpoint. "
+                "Integration testing requires direct connection."
+            )
+
+        # 4. Public schema tables & Alembic revision check
+        tables_res = connection.execute(text("""
+            SELECT table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        """)).scalars().all()
+        tables_set = set(tables_res)
+
+        if "alembic_version" not in tables_set:
+            raise TargetVerificationRefusal(
+                "Alembic version table missing on safety branch. Schema is unmigrated."
+            )
+
+        current_rev = connection.execute(text("SELECT version_num FROM alembic_version")).scalar()
+        if current_rev != EXPECTED_MIGRATION_HEAD:
+            raise TargetVerificationRefusal(
+                f"Alembic revision mismatch on safety branch: Found '{current_rev}', "
+                f"expected head '{EXPECTED_MIGRATION_HEAD}'."
+            )
+
+        # 5. Pre-existing invariant check
+        if "users" in tables_set:
+            active_owners = connection.execute(text("""
+                SELECT COUNT(*) FROM users WHERE platform_role = 'owner' AND status = 'active'
+            """)).scalar() or 0
+            if active_owners > 0:
+                raise TargetVerificationRefusal(
+                    f"Pre-condition refusal: Found {active_owners} active platform owner(s). "
+                    "Safety branch must start with 0 active platform owners for clean concurrency tests."
+                )
+
+    except PostgresGuardError:
+        raise
+    except Exception as exc:
+        safe_msg = sanitize_error_message(str(exc), target)
+        raise TargetVerificationRefusal(
+            f"Neon target verification encountered an unexpected error and failed closed: {safe_msg}"
+        ) from None
+
+
 def verify_disposable_test_target(
     connection: sa.Connection,
     target: ParsedPostgresTestTarget
@@ -286,6 +428,10 @@ def verify_disposable_test_target(
     6. Does not expose application row contents or raw credentials.
     7. All unexpected exceptions are sanitized and chained raw exceptions suppressed.
     """
+    if target.is_neon:
+        verify_neon_safety_branch_target(connection, target)
+        return
+
     try:
         # 1. Verify active database name from PostgreSQL catalog
         server_db = connection.execute(text("SELECT current_database()")).scalar()

@@ -14,6 +14,7 @@ configured via `ROMS_POSTGRES_TEST_DATABASE_URL`. Without these flags, pytest sk
 """
 
 import threading
+import time
 import uuid
 import pytest
 import sqlalchemy as sa
@@ -55,7 +56,7 @@ def _create_test_user(session: Session, email_prefix: str, role: str = None, is_
 # Scenario 1: Competing Owner Transfers (Lock Serialization & Re-Read Rejection)
 # ==============================================================================
 
-def test_pg_concurrent_owner_transfer_race(pg_engine):
+def test_pg_concurrent_owner_transfer_race(pg_engine, pg_user_tracker):
     """
     Two concurrent transfer requests from the same Owner race across independent PostgreSQL connections.
     Verifies that:
@@ -67,12 +68,12 @@ def test_pg_concurrent_owner_transfer_race(pg_engine):
     """
     SessionMaker = sa.orm.sessionmaker(bind=pg_engine, autocommit=False, autoflush=False)
 
-    # Setup seed data
+    # Setup seed data with tracked, run-scoped test users
     setup_session = SessionMaker()
     try:
-        owner = _create_test_user(setup_session, "owner", role="owner", is_admin=True)
-        target_a = _create_test_user(setup_session, "target_a", role="admin", is_admin=True)
-        target_b = _create_test_user(setup_session, "target_b", role="admin", is_admin=True)
+        owner = pg_user_tracker.create_user(setup_session, "owner", role="owner", is_admin=True)
+        target_a = pg_user_tracker.create_user(setup_session, "target_a", role="admin", is_admin=True)
+        target_b = pg_user_tracker.create_user(setup_session, "target_b", role="admin", is_admin=True)
         setup_session.commit()
         owner_id = owner.id
         target_a_id = target_a.id
@@ -117,6 +118,7 @@ def test_pg_concurrent_owner_transfer_race(pg_engine):
             ).scalar()
             assert held is False, "Expected advisory lock 424242111 to be held by Thread 1"
             t2_blocked_verified.set()
+            s2.rollback()
 
             with s2.begin():
                 # This call will block at PostgreSQL level until Thread 1 commits!
@@ -178,7 +180,7 @@ def test_pg_concurrent_owner_transfer_race(pg_engine):
 # Scenario 2: Concurrent First-Owner Bootstrap Race
 # ==============================================================================
 
-def test_pg_concurrent_bootstrap_first_owner(pg_engine):
+def test_pg_concurrent_bootstrap_first_owner(pg_engine, pg_user_tracker):
     """
     Two concurrent bootstrap attempts race to designate the first Platform Owner when none exists.
     Verifies that:
@@ -190,8 +192,8 @@ def test_pg_concurrent_bootstrap_first_owner(pg_engine):
 
     setup_session = SessionMaker()
     try:
-        u1 = _create_test_user(setup_session, "cand1", role=None, is_admin=False)
-        u2 = _create_test_user(setup_session, "cand2", role=None, is_admin=False)
+        u1 = pg_user_tracker.create_user(setup_session, "cand1", role=None, is_admin=False)
+        u2 = pg_user_tracker.create_user(setup_session, "cand2", role=None, is_admin=False)
         setup_session.commit()
         u1_email = u1.email
         u2_email = u2.email
@@ -227,6 +229,7 @@ def test_pg_concurrent_bootstrap_first_owner(pg_engine):
             ).scalar()
             assert held is False
             t2_blocked_verified.set()
+            s2.rollback()
 
             with s2.begin():
                 res = promote_user_to_platform_admin_service(s2, email=u2_email, role="owner")
@@ -301,6 +304,7 @@ def test_pg_advisory_lock_released_on_commit(pg_connection_pair):
             ).scalar()
             results["try_lock_during_tx1"] = held
             t2_checked.set()
+            conn2.rollback()
 
             # Now wait for blocking lock — unblocks once Conn 1 commits
             tx2 = conn2.begin()
@@ -329,7 +333,7 @@ def test_pg_advisory_lock_released_on_commit(pg_connection_pair):
 # Scenario 4: Advisory-Lock Behavior on Rollback
 # ==============================================================================
 
-def test_pg_advisory_lock_released_on_rollback(pg_connection_pair, pg_engine):
+def test_pg_advisory_lock_released_on_rollback(pg_connection_pair, pg_engine, pg_user_tracker):
     """
     Confirms advisory lock 424242111 is released immediately upon ROLLBACK,
     and uncommitted mutations from the rolled-back transaction are not visible.
@@ -339,7 +343,7 @@ def test_pg_advisory_lock_released_on_rollback(pg_connection_pair, pg_engine):
 
     setup_session = SessionMaker()
     try:
-        user = _create_test_user(setup_session, "rollback_test", role="admin", is_admin=True)
+        user = pg_user_tracker.create_user(setup_session, "rollback_test", role="admin", is_admin=True)
         setup_session.commit()
         user_id = user.id
         initial_name = user.display_name
@@ -378,6 +382,7 @@ def test_pg_advisory_lock_released_on_rollback(pg_connection_pair, pg_engine):
             ).scalar()
             results["try_lock_during_tx1"] = held
             t2_checked.set()
+            conn2.rollback()
 
             # Wait for unblock on rollback
             tx2 = conn2.begin()
@@ -413,7 +418,7 @@ def test_pg_advisory_lock_released_on_rollback(pg_connection_pair, pg_engine):
 # Scenario 5: Storage Engine Constraint Fallback (Advisory Lock Bypass)
 # ==============================================================================
 
-def test_pg_unique_index_enforcement_on_bypass(pg_connection_pair, pg_engine):
+def test_pg_unique_index_enforcement_on_bypass(pg_connection_pair, pg_engine, pg_user_tracker):
     """
     Demonstrates defense-in-depth: if application-level advisory locking is bypassed,
     the partial unique index `ix_users_single_active_platform_owner` strictly prevents
@@ -424,8 +429,8 @@ def test_pg_unique_index_enforcement_on_bypass(pg_connection_pair, pg_engine):
 
     setup_session = SessionMaker()
     try:
-        u1 = _create_test_user(setup_session, "bypass1", role="admin", is_admin=True)
-        u2 = _create_test_user(setup_session, "bypass2", role="admin", is_admin=True)
+        u1 = pg_user_tracker.create_user(setup_session, "bypass1", role="admin", is_admin=True)
+        u2 = pg_user_tracker.create_user(setup_session, "bypass2", role="admin", is_admin=True)
         setup_session.commit()
         u1_id = u1.id
         u2_id = u2.id
@@ -433,7 +438,7 @@ def test_pg_unique_index_enforcement_on_bypass(pg_connection_pair, pg_engine):
         setup_session.close()
 
     t1_updated = threading.Event()
-    t2_updated = threading.Event()
+    t2_ready = threading.Event()
     results = {}
 
     def run_conn1():
@@ -445,31 +450,54 @@ def test_pg_unique_index_enforcement_on_bypass(pg_connection_pair, pg_engine):
                 {"id": u1_id}
             )
             t1_updated.set()
-            assert t2_updated.wait(timeout=5)
+            assert t2_ready.wait(timeout=5), "Thread 2 did not signal readiness"
+
+            # Deterministically verify that Thread 2 has reached and blocked on the unique index conflict in PostgreSQL
+            blocked = False
+            for _ in range(50):
+                cnt = conn1.execute(text("SELECT COUNT(*) FROM pg_locks WHERE NOT granted")).scalar() or 0
+                if cnt > 0:
+                    blocked = True
+                    break
+                time.sleep(0.05)
+
+            # Conn 1 commits; unblocks Conn 2 which will encounter the uniqueness violation
             tx1.commit()
             results["tx1"] = "committed"
         except Exception as exc:
             results["tx1"] = exc
+            try:
+                tx1.rollback()
+            except Exception:
+                pass
 
     def run_conn2():
         try:
-            assert t1_updated.wait(timeout=5)
+            assert t1_updated.wait(timeout=5), "Thread 1 did not execute first update in time"
             tx2 = conn2.begin()
-            # Bypassing advisory lock; concurrent update to second owner
-            conn2.execute(
-                text("UPDATE users SET platform_role = 'owner', status = 'active' WHERE id = :id"),
-                {"id": u2_id}
-            )
-            t2_updated.set()
-            # Conn 1 will commit first. When Conn 2 commits, ix_users_single_active_platform_owner must raise IntegrityError!
+            t2_ready.set()
+            # Bypassing advisory lock; concurrent update to second owner.
+            # This statement blocks inside PostgreSQL kernel on ix_users_single_active_platform_owner
+            # until tx1 commits, at which point PostgreSQL raises IntegrityError!
             try:
+                conn2.execute(
+                    text("UPDATE users SET platform_role = 'owner', status = 'active' WHERE id = :id"),
+                    {"id": u2_id}
+                )
                 tx2.commit()
                 results["tx2"] = "committed_unexpected"
             except IntegrityError as exc:
                 results["tx2"] = exc
-                tx2.rollback()
+                try:
+                    tx2.rollback()
+                except Exception:
+                    pass
         except Exception as exc:
             results["tx2"] = exc
+            try:
+                tx2.rollback()
+            except Exception:
+                pass
 
     th1 = threading.Thread(target=run_conn1)
     th2 = threading.Thread(target=run_conn2)
@@ -511,6 +539,7 @@ def test_pg_statement_timeout_and_cleanup(pg_connection_pair):
 
     # Configure short statement timeout on Connection 2
     conn2.execute(text("SET statement_timeout = '1500ms';"))
+    conn2.commit()
 
     t1_locked = threading.Event()
     t2_timed_out = threading.Event()

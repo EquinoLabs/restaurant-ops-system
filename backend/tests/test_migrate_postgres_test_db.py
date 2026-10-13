@@ -171,3 +171,14 @@ def test_migrate_run_id_mismatch_refusal():
                     raw_url=valid_test_url, confirmation=True, expected_run_id="run-1"
                 )
 
+
+def test_migrate_conflicting_run_id_and_env_refusal(monkeypatch):
+    valid_test_url = "postgresql+psycopg://roms_test_user:pass@127.0.0.1:5433/roms_test_db"
+    monkeypatch.setenv("ROMS_POSTGRES_TEST_RUN_ID", "run-env-override")
+
+    with pytest.raises(ConfigurationError, match="Explicit run ID 'run-cli-explicit' mismatches"):
+        run_isolated_test_migration(
+            raw_url=valid_test_url, confirmation=True, expected_run_id="run-cli-explicit"
+        )
+
+

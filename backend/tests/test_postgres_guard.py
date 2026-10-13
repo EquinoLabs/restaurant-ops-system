@@ -15,6 +15,7 @@ from tests.postgres_guard import (
     validate_postgres_test_url,
     verify_migration_dag_head,
     verify_disposable_test_target,
+    verify_neon_safety_branch_target,
     bootstrap_disposable_test_database,
     ParsedPostgresTestTarget,
     ConfigurationError,
@@ -22,6 +23,11 @@ from tests.postgres_guard import (
     MigrationGraphError,
     EXPECTED_MIGRATION_HEAD,
     BOOTSTRAP_CONFIRMATION_TOKEN,
+    NEON_EXPECTED_PROJECT_ID,
+    NEON_EXPECTED_BRANCH_ID,
+    NEON_FORBIDDEN_SOURCE_BRANCH_ID,
+    NEON_EXPECTED_ENDPOINT_ID,
+    NEON_EXPECTED_DATABASE,
 )
 
 
@@ -134,6 +140,17 @@ def test_verify_migration_dag_head_mismatch():
             alembic_ini_path="alembic.ini",
             expected_head="0013_nonexistent_migration"
         )
+
+
+def test_verify_migration_dag_head_multiple_heads():
+    from unittest.mock import patch, MagicMock
+    mock_script = MagicMock()
+    mock_script.get_heads.return_value = ["0012_head_a", "0012_head_b"]
+
+    with patch("alembic.script.ScriptDirectory.from_config", return_value=mock_script):
+        with pytest.raises(MigrationGraphError, match="Expected exactly 1 migration head, but found 2"):
+            verify_migration_dag_head(alembic_ini_path="alembic.ini")
+
 
 
 def test_verify_disposable_test_target_refuses_empty_uninitialized_database():
@@ -405,6 +422,18 @@ def test_validate_postgres_test_url_resolves_run_id(monkeypatch):
     target_env = validate_postgres_test_url(test_url)
     assert target_env.run_id == "run-env-67890"
 
+    # Agreement between explicit parameter and environment
+    target_agree = validate_postgres_test_url(test_url, expected_run_id="run-env-67890")
+    assert target_agree.run_id == "run-env-67890"
+
+
+def test_validate_postgres_test_url_fails_on_run_id_mismatch(monkeypatch):
+    test_url = "postgresql+psycopg://roms_test_user:p@127.0.0.1:5433/roms_test_db"
+    monkeypatch.setenv("ROMS_POSTGRES_TEST_RUN_ID", "run-env-11111")
+
+    with pytest.raises(ConfigurationError, match="Explicit run ID 'run-cli-22222' mismatches"):
+        validate_postgres_test_url(test_url, expected_run_id="run-cli-22222")
+
 
 def test_bootstrap_disposable_test_database_with_matching_run_id():
     mock_conn = MagicMock()
@@ -538,5 +567,231 @@ def test_verify_disposable_test_target_refuses_marker_run_id_mismatch():
 
     with pytest.raises(TargetVerificationRefusal, match="Marker run ID mismatch"):
         verify_disposable_test_target(mock_conn, target)
+
+
+# ==============================================================================
+# Neon Safety Branch Target Guard Unit Tests (OP-02 Phase 2)
+# ==============================================================================
+
+def test_validate_postgres_test_url_neon_direct_success():
+    url = f"postgresql+psycopg://neondb_owner:secret@{NEON_EXPECTED_ENDPOINT_ID}.c-4.ap-southeast-1.aws.neon.tech:5432/{NEON_EXPECTED_DATABASE}?sslmode=require"
+    target = validate_postgres_test_url(url)
+    assert target.is_neon is True
+    assert target.host == f"{NEON_EXPECTED_ENDPOINT_ID}.c-4.ap-southeast-1.aws.neon.tech"
+    assert target.database == NEON_EXPECTED_DATABASE
+    assert "secret" not in target.redacted_url
+
+
+def test_validate_postgres_test_url_neon_normalizes_pooler():
+    pooler_url = f"postgresql://neondb_owner:secret@{NEON_EXPECTED_ENDPOINT_ID}-pooler.c-4.ap-southeast-1.aws.neon.tech:5432/{NEON_EXPECTED_DATABASE}?sslmode=require"
+    target = validate_postgres_test_url(pooler_url)
+    assert target.is_neon is True
+    assert target.host == f"{NEON_EXPECTED_ENDPOINT_ID}.c-4.ap-southeast-1.aws.neon.tech"
+    assert "-pooler" not in target.raw_url
+    assert "-pooler" not in target.redacted_url
+    assert target.scheme == "postgresql+psycopg"
+
+
+def test_validate_postgres_test_url_neon_refuses_forbidden_source_branch():
+    bad_url = f"postgresql+psycopg://u:p@{NEON_EXPECTED_ENDPOINT_ID}.c-4.aws.neon.tech:5432/{NEON_EXPECTED_DATABASE}?branch={NEON_FORBIDDEN_SOURCE_BRANCH_ID}"
+    with pytest.raises(ConfigurationError, match="contains forbidden source branch"):
+        validate_postgres_test_url(bad_url)
+
+
+def test_validate_postgres_test_url_neon_refuses_unauthorized_endpoint():
+    bad_url = f"postgresql+psycopg://u:p@ep-unauthorized-random-123.c-4.aws.neon.tech:5432/{NEON_EXPECTED_DATABASE}"
+    with pytest.raises(ConfigurationError, match="does not match authorized endpoint"):
+        validate_postgres_test_url(bad_url)
+
+
+def test_validate_postgres_test_url_neon_refuses_wrong_database():
+    bad_url = f"postgresql+psycopg://u:p@{NEON_EXPECTED_ENDPOINT_ID}.c-4.aws.neon.tech:5432/wrongdb"
+    with pytest.raises(ConfigurationError, match="does not match expected database"):
+        validate_postgres_test_url(bad_url)
+
+
+def test_verify_neon_safety_branch_target_success():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),     # current_database()
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),   # neon.project_id
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),    # neon.branch_id
+        MagicMock(scalar=lambda: NEON_EXPECTED_ENDPOINT_ID),  # neon.endpoint_id
+        MagicMock(scalars=lambda: MagicMock(all=lambda: ["users", "alembic_version", "audit_logs"])),  # tables
+        MagicMock(scalar=lambda: EXPECTED_MIGRATION_HEAD),    # version_num
+        MagicMock(scalar=lambda: 0),                          # active owners count
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url=f"postgresql+psycopg://u:p@{NEON_EXPECTED_ENDPOINT_ID}.c-4.aws.neon.tech:5432/{NEON_EXPECTED_DATABASE}",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host=f"{NEON_EXPECTED_ENDPOINT_ID}.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    # Must succeed without error
+    verify_neon_safety_branch_target(mock_conn, target)
+    # verify_disposable_test_target delegates to verify_neon_safety_branch_target
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_ENDPOINT_ID),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: ["users", "alembic_version"])),
+        MagicMock(scalar=lambda: EXPECTED_MIGRATION_HEAD),
+        MagicMock(scalar=lambda: 0),
+    ]
+    verify_disposable_test_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_forbidden_source_branch():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_FORBIDDEN_SOURCE_BRANCH_ID),  # FORBIDDEN SOURCE BRANCH!
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host="ep-lucky-band-b3tbsmfz.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="CRITICAL SAFETY VIOLATION: Connected to forbidden source branch"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_mismatched_project():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: "rogue-project-id"),  # Wrong project!
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host="ep-lucky-band-b3tbsmfz.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="Neon project identity mismatch"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_mismatched_endpoint():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),
+        MagicMock(scalar=lambda: "ep-rogue-endpoint-999"),  # Wrong endpoint!
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host="ep-lucky-band-b3tbsmfz.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="Neon endpoint identity mismatch"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_pooler_host():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_ENDPOINT_ID),
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host=f"{NEON_EXPECTED_ENDPOINT_ID}-pooler.c-4.aws.neon.tech",  # Pooler host!
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="is a pooled endpoint"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_revision_mismatch():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_ENDPOINT_ID),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: ["users", "alembic_version"])),
+        MagicMock(scalar=lambda: "0006_outlet_branding"),  # Mismatched revision!
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host="ep-lucky-band-b3tbsmfz.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="Alembic revision mismatch on safety branch"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
+
+def test_verify_neon_safety_branch_target_refuses_preexisting_active_owner():
+    mock_conn = MagicMock()
+    mock_conn.execute.side_effect = [
+        MagicMock(scalar=lambda: NEON_EXPECTED_DATABASE),
+        MagicMock(scalar=lambda: NEON_EXPECTED_PROJECT_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_BRANCH_ID),
+        MagicMock(scalar=lambda: NEON_EXPECTED_ENDPOINT_ID),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: ["users", "alembic_version"])),
+        MagicMock(scalar=lambda: EXPECTED_MIGRATION_HEAD),
+        MagicMock(scalar=lambda: 1),  # Pre-existing active owner present!
+    ]
+
+    target = ParsedPostgresTestTarget(
+        raw_url="dummy",
+        redacted_url="<redacted>",
+        scheme="postgresql+psycopg",
+        username="u",
+        host="ep-lucky-band-b3tbsmfz.c-4.aws.neon.tech",
+        port=5432,
+        database=NEON_EXPECTED_DATABASE,
+        is_neon=True,
+    )
+
+    with pytest.raises(TargetVerificationRefusal, match="Pre-condition refusal: Found 1 active platform owner"):
+        verify_neon_safety_branch_target(mock_conn, target)
+
 
 

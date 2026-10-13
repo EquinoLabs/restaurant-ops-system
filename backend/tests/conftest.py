@@ -273,6 +273,7 @@ def pg_engine(pg_target):
     """
     Session-scoped engine factory. Verifies target identity before creating pool.
     Guarantees raw driver exceptions are sanitized and raw credentials are never printed.
+    Takes a snapshot of pre-existing non-test records and strictly verifies their preservation after testing.
     """
     from tests.postgres_guard import (
         verify_disposable_test_target,
@@ -290,9 +291,19 @@ def pg_engine(pg_target):
         max_overflow=5,
         pool_pre_ping=True,
     )
+    initial_user_ids = set()
     try:
         with engine.connect() as conn:
             verify_disposable_test_target(conn, pg_target)
+            # Record baseline non-test users to verify preservation after all tests complete
+            tables_res = conn.execute(sa.text("""
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+            """)).scalars().all()
+            if "users" in tables_res:
+                initial_user_ids = set(
+                    conn.execute(sa.text("SELECT id FROM users WHERE email NOT LIKE 'test_%'")).scalars().all()
+                )
     except Exception as exc:
         safe_msg = sanitize_error_message(str(exc), pg_target)
         raise TargetVerificationRefusal(
@@ -300,8 +311,38 @@ def pg_engine(pg_target):
         ) from None
 
     yield engine
-    engine.dispose()
 
+    # Post-session integrity verification: verify pre-existing records are 100% intact
+    if initial_user_ids:
+        try:
+            with engine.connect() as conn:
+                final_user_ids = set(
+                    conn.execute(sa.text("SELECT id FROM users WHERE email NOT LIKE 'test_%'")).scalars().all()
+                )
+                leaked_test_users = conn.execute(
+                    sa.text("SELECT COUNT(*) FROM users WHERE email LIKE 'test_%'")
+                ).scalar() or 0
+                active_owners = conn.execute(
+                    sa.text("SELECT COUNT(*) FROM users WHERE platform_role = 'owner' AND status = 'active'")
+                ).scalar() or 0
+
+            if initial_user_ids != final_user_ids:
+                raise AssertionError(
+                    "Teardown Safety Violation: Pre-existing user accounts were modified or deleted during test run!"
+                )
+            if leaked_test_users > 0:
+                raise AssertionError(
+                    f"Teardown Safety Violation: {leaked_test_users} transient test user(s) were not cleaned up!"
+                )
+            if active_owners > 0:
+                raise AssertionError(
+                    f"Teardown Safety Violation: {active_owners} active platform owner(s) remain after test run!"
+                )
+        except Exception as exc:
+            safe_msg = sanitize_error_message(str(exc), pg_target)
+            raise AssertionError(f"Post-test integrity verification failed: {safe_msg}") from None
+
+    engine.dispose()
 
 
 @pytest.fixture(scope="function")
@@ -316,7 +357,9 @@ def pg_connection_pair(pg_engine):
     conn2 = pg_engine.connect()
 
     conn1.execute(sa.text("SET statement_timeout = '5000ms';"))
+    conn1.commit()
     conn2.execute(sa.text("SET statement_timeout = '5000ms';"))
+    conn2.commit()
 
     try:
         yield conn1, conn2
@@ -331,4 +374,81 @@ def pg_connection_pair(pg_engine):
             pass
         conn1.close()
         conn2.close()
+
+
+@pytest.fixture(scope="function")
+def pg_user_tracker(pg_engine):
+    """
+    Function-scoped entity tracker. Guarantees deterministic, scoped teardown of transient test users
+    and associated audit logs created during an integration test run.
+    Deletes strictly by exact primary key (WHERE id = ANY(:ids)).
+    Never performs broad, un-scoped deletions.
+    """
+    import uuid
+    import sqlalchemy as sa
+    from tests.postgres_guard import sanitize_error_message
+    from app.modules.staff.models import User
+    from app.core.security import hash_password
+
+    class TestUserTracker:
+        def __init__(self, engine):
+            self.engine = engine
+            self.created_user_ids: list[uuid.UUID] = []
+
+        def create_user(
+            self,
+            session,
+            email_prefix: str,
+            role: str = None,
+            is_admin: bool = False,
+            display_name: str = None,
+            status: str = "active",
+        ) -> User:
+            user_id = uuid.uuid4()
+            user = User(
+                id=user_id,
+                email=f"test_{email_prefix}_{uuid.uuid4().hex[:8]}@example.com",
+                password_hash=hash_password("TestPassword123!"),
+                display_name=display_name or f"Test {email_prefix.title()}",
+                status=status,
+                platform_role=role,
+                is_platform_admin=is_admin,
+            )
+            session.add(user)
+            session.flush()
+            self.created_user_ids.append(user_id)
+            return user
+
+        def cleanup(self):
+            if not self.created_user_ids:
+                return
+            ids = list(self.created_user_ids)
+            with self.engine.connect() as conn:
+                with conn.begin():
+                    # 1. Scoped cleanup of audit logs where actor or entity matches created user IDs
+                    conn.execute(
+                        sa.text("""
+                            DELETE FROM audit_logs
+                            WHERE actor_user_id = ANY(:ids)
+                               OR entity_id = ANY(:ids)
+                        """),
+                        {"ids": ids}
+                    )
+                    # 2. Scoped cleanup of users table by exact created user IDs
+                    conn.execute(
+                        sa.text("DELETE FROM users WHERE id = ANY(:ids)"),
+                        {"ids": ids}
+                    )
+            self.created_user_ids.clear()
+
+    tracker = TestUserTracker(pg_engine)
+    try:
+        yield tracker
+    finally:
+        try:
+            tracker.cleanup()
+        except Exception as exc:
+            safe_msg = sanitize_error_message(str(exc))
+            raise AssertionError(f"Scoped test user cleanup failed: {safe_msg}") from None
+
 
