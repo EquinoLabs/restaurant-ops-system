@@ -29,4 +29,5 @@ class Outlet(Base, TimestampMixin):
     business = relationship("Business", back_populates="outlets")
     categories = relationship("MenuCategory", back_populates="outlet", cascade="all, delete-orphan")
     items = relationship("MenuItem", back_populates="outlet", cascade="all, delete-orphan")
+    outlet_subscriptions = relationship("OutletSubscription", back_populates="outlet", cascade="all, delete-orphan")
 

@@ -18,6 +18,7 @@ class Business(Base, TimestampMixin):
     trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     outlets = relationship("Outlet", back_populates="business", cascade="all, delete-orphan")
+    outlet_subscriptions = relationship("OutletSubscription", back_populates="business", cascade="all, delete-orphan")
 
 
 # =============================================================================

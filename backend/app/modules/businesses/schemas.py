@@ -92,7 +92,6 @@ class PlatformSubscriptionUpdate(BaseModel):
     trial_ends_at: Optional[datetime] = None
     current_period_start: Optional[datetime] = None
     current_period_end: Optional[datetime] = None
-    cancel_at_period_end: Optional[bool] = None
     reason: Optional[str] = None
 
     @field_validator("trial_ends_at", "current_period_start", "current_period_end", mode="before")

@@ -1,5 +1,3 @@
-import uuid
-from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -14,7 +12,6 @@ router = APIRouter(prefix="/business", tags=["business"])
 
 @router.get("/subscription", response_model=OwnerSubscriptionSummaryOut)
 def get_owner_subscription(
-    business_id: Optional[uuid.UUID] = None,
     business: Business = Depends(RequireBusinessOwner()),
     db: Session = Depends(get_db)
 ):

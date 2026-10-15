@@ -155,7 +155,7 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1. Provision a business with max_outlets=1
+    # 1. Provision a business with max_outlets=1 (field retained for backward compatibility)
     create_resp = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
@@ -174,8 +174,21 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
     assert biz["plan_name"] == "starter"
     assert biz["max_outlets"] == 1
 
-    # 2. Attempt to add a 2nd outlet -> exceeds max_outlets=1 -> 422 ValidationError
-    add_outlet_fail = client.post(
+    # 1b. Genuinely invalid max_outlets values are still rejected at creation
+    invalid_create_resp = client.post(
+        "/api/v1/platform/businesses",
+        headers=headers,
+        json={
+            "name": "Invalid Cap Cafe",
+            "primary_outlet_name": "Invalid Cap Main",
+            "public_slug": "invalid-cap-main",
+            "max_outlets": 0
+        }
+    )
+    assert invalid_create_resp.status_code == 422
+
+    # 2. Phase 1: max_outlets cap removed -> 2nd outlet creation succeeds despite max_outlets=1
+    add_outlet_resp = client.post(
         f"/api/v1/platform/businesses/{biz_id}/outlets",
         headers=headers,
         json={
@@ -183,10 +196,10 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
             "public_slug": "single-outlet-second"
         }
     )
-    assert add_outlet_fail.status_code == 422
-    assert "maximum allowed limit" in add_outlet_fail.json()["detail"]["error"]["message"]
+    assert add_outlet_resp.status_code == 200
+    assert add_outlet_resp.json()["public_slug"] == "single-outlet-second"
 
-    # 3. Update subscription status to 'active', plan to 'growth', max_outlets to 3
+    # 3. Legacy bulk subscription update is still accepted (status/plan/max_outlets echoed)
     start_dt = utc_now()
     end_dt = compute_annual_period_end(start_dt)
     patch_resp = client.patch(
@@ -208,18 +221,19 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
     assert updated_biz["plan_name"] == "growth"
     assert updated_biz["max_outlets"] == 3
 
-    # 4. Now adding 2nd outlet succeeds
-    add_outlet_success = client.post(
+    # 4. Outlet creation remains uncapped after the subscription update
+    add_third_outlet_resp = client.post(
         f"/api/v1/platform/businesses/{biz_id}/outlets",
         headers=headers,
         json={
-            "name": "Single Outlet Second",
-            "public_slug": "single-outlet-second"
+            "name": "Single Outlet Third",
+            "public_slug": "single-outlet-third"
         }
     )
-    assert add_outlet_success.status_code == 200
+    assert add_third_outlet_resp.status_code == 200
+    assert add_third_outlet_resp.json()["public_slug"] == "single-outlet-third"
 
-    # 5. Test invalid status updates
+    # 5. Genuinely invalid subscription updates are still rejected
     invalid_sub_resp = client.patch(
         f"/api/v1/platform/businesses/{biz_id}/subscription",
         headers=headers,

@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.core.security import decode_access_token
 from app.core.errors import AuthenticationError, ForbiddenError, ServiceUnavailableError
-from app.modules.staff.models import User, OutletMembership
+from app.modules.staff.models import User, OutletMembership, BusinessMembership
+from app.modules.outlets.models import Outlet
 
 security_bearer = HTTPBearer(auto_error=False)
 
@@ -114,6 +115,20 @@ def get_current_platform_admin(
 
 
 class RequireOutletRole:
+    """
+    Enforces outlet-scoped tenant authorization.
+
+    Contract:
+    - Callers with no relationship to the target outlet (no OutletMembership row and no
+      canonical BusinessMembership owner row for its business) receive a uniform
+      HTTP 403 whether or not the outlet exists, so ordinary tenant users cannot probe
+      outlet existence (no 404/403 oracle, no suspension-state oracle).
+    - Established members/business-owners are then subject to the business/outlet
+      suspension guards (403) and role validation (403).
+    - Platform routes keep their own 404 detail semantics (platform/business-owner
+      detail endpoints are outside this dependency).
+    """
+
     def __init__(self, allowed_roles: Optional[List[str]] = None):
         self.allowed_roles = allowed_roles or ["owner", "manager"]
 
@@ -123,23 +138,170 @@ class RequireOutletRole:
         current_user: User = Depends(get_current_user),
         db: Session = Depends(get_db)
     ) -> OutletMembership:
-        membership = (
-            db.query(OutletMembership)
-            .filter(
-                OutletMembership.user_id == current_user.id,
-                OutletMembership.outlet_id == outlet_id
+        outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+
+        membership = None
+        biz_owner = None
+        if outlet is not None:
+            membership = (
+                db.query(OutletMembership)
+                .filter(
+                    OutletMembership.user_id == current_user.id,
+                    OutletMembership.outlet_id == outlet_id
+                )
+                .first()
             )
-            .first()
-        )
-        if not membership:
+            if membership is None:
+                biz_owner = (
+                    db.query(BusinessMembership)
+                    .filter(
+                        BusinessMembership.business_id == outlet.business_id,
+                        BusinessMembership.user_id == current_user.id,
+                        BusinessMembership.role == "owner"
+                    )
+                    .first()
+                )
+
+        if outlet is None:
+            raise ForbiddenError("You do not have administrative access to this outlet")
+        if membership is None and biz_owner is None:
             raise ForbiddenError("You do not have administrative access to this outlet")
 
-        if membership.outlet and membership.outlet.business and membership.outlet.business.status != "active":
+        # Business suspension check (hard platform kill switch)
+        if outlet.business and outlet.business.status != "active":
             raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
 
-        if self.allowed_roles and membership.role not in self.allowed_roles:
-            raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
+        # Outlet operational suspension check
+        if outlet.status != "active":
+            raise ForbiddenError("This outlet is currently suspended. Please contact platform support.")
 
+        if membership is not None:
+            if self.allowed_roles and membership.role not in self.allowed_roles:
+                raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
+            return membership
+
+        if self.allowed_roles and "owner" not in self.allowed_roles:
+            raise ForbiddenError("Role 'owner' is not authorized to perform this operation")
+        # Synthesize an OutletMembership for downstream caller compatibility
+        return OutletMembership(
+            id=biz_owner.id,
+            user_id=current_user.id,
+            outlet_id=outlet_id,
+            role="owner",
+            outlet=outlet
+        )
+
+
+def has_outlet_relationship(db: Session, outlet_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """
+    True when the user has any relationship to the outlet: an OutletMembership row or a
+    canonical BusinessMembership owner row for the outlet's business. Mirrors the
+    relationship resolution performed by RequireOutletRole (P3 anti-probing contract).
+    """
+    has_membership = (
+        db.query(OutletMembership)
+        .filter(
+            OutletMembership.user_id == user_id,
+            OutletMembership.outlet_id == outlet_id
+        )
+        .first()
+        is not None
+    )
+    if has_membership:
+        return True
+
+    outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+    if outlet is None:
+        return False
+
+    return (
+        db.query(BusinessMembership)
+        .filter(
+            BusinessMembership.business_id == outlet.business_id,
+            BusinessMembership.user_id == user_id,
+            BusinessMembership.role == "owner"
+        )
+        .first()
+        is not None
+    )
+
+
+def enforce_outlet_entitlement(
+    db: Session,
+    membership: OutletMembership,
+    feature_code: str,
+    write: bool = False
+):
+    """
+    Feature entitlement gate for an outlet the caller already passed membership,
+    suspension, and role checks for. Delegates all policy to EntitlementService
+    (single source of truth: business/outlet operational status, subscription
+    lifecycle, plan features, restrictions, and grant overrides).
+
+    write=True additionally denies expired/cancelled subscriptions even when the
+    feature carries the read-only digital-menu exception (menu.digital): writing
+    requires a live subscription status.
+    """
+    from app.modules.subscriptions.service import EntitlementService
+
+    outlet = membership.outlet
+    result = EntitlementService.check_entitlement(
+        db=db,
+        business_id=outlet.business_id,
+        feature_code=feature_code,
+        outlet_id=outlet.id
+    )
+    if not result.authorized:
+        if result.reason == "BUSINESS_SUSPENDED":
+            raise ForbiddenError("This business account is currently suspended.")
+        raise ForbiddenError(f"Entitlement '{feature_code}' is not authorized. Reason: {result.reason}")
+    if write and result.resolved_status in ("expired", "cancelled"):
+        raise ForbiddenError(
+            f"Entitlement '{feature_code}' is not authorized. Reason: SUBSCRIPTION_{result.resolved_status.upper()}"
+        )
+    return result
+
+
+def verify_subresource_outlet_access(
+    db: Session,
+    outlet_id: uuid.UUID,
+    user: User,
+    allowed_roles: Optional[List[str]],
+    feature_code: str,
+    write: bool = False
+) -> OutletMembership:
+    """
+    Shared operational access check for sub-resource routes (menu item, category,
+    order, table). Callers must have already resolved the sub-resource and applied
+    the anti-probing not-found policy (has_outlet_relationship); this function
+    applies the full RequireOutletRole policy (suspension guards, role validation,
+    canonical business-owner access) followed by feature entitlement.
+    """
+    membership = RequireOutletRole(allowed_roles)(outlet_id, user, db)
+    enforce_outlet_entitlement(db, membership, feature_code, write=write)
+    return membership
+
+
+class RequireOutletEntitlement:
+    """
+    Outlet-scoped operational-write gate: RequireOutletRole (relationship,
+    business/outlet suspension, role validation, canonical business-owner access)
+    followed by feature entitlement via EntitlementService.
+    """
+
+    def __init__(self, allowed_roles: List[str], feature_code: str, write: bool = False):
+        self._role_check = RequireOutletRole(allowed_roles)
+        self.feature_code = feature_code
+        self.write = write
+
+    def __call__(
+        self,
+        outlet_id: uuid.UUID,
+        current_user: User = Depends(get_current_user),
+        db: Session = Depends(get_db)
+    ) -> OutletMembership:
+        membership = self._role_check(outlet_id, current_user, db)
+        enforce_outlet_entitlement(db, membership, self.feature_code, write=self.write)
         return membership
 
 
@@ -171,7 +333,10 @@ class RequireBusinessOwner:
     """
     Dependency that enforces owner-level access for business-scoped endpoints (OP-05).
     - Requires an authenticated, active User.
-    - Resolves business ownership from active OutletMembership records where role == 'owner'.
+    - Resolves business ownership canonically from BusinessMembership rows where role == 'owner'.
+    - Gated legacy fallback: only while the caller has NO BusinessMembership rows at all,
+      ownership is derived from OutletMembership rows where role == 'owner' (transition
+      period for pre-0013 data). When canonical rows exist, they are authoritative.
     - If optional business_id query parameter is provided, verifies caller is an owner of that specific business.
     - Fails closed if caller has no owner memberships (403 Forbidden).
     - Fails closed if the business is suspended (403 Forbidden).
@@ -186,23 +351,39 @@ class RequireBusinessOwner:
         from app.modules.businesses.models import Business
         from app.modules.outlets.models import Outlet
 
-        owner_memberships = (
-            db.query(OutletMembership)
-            .join(Outlet, OutletMembership.outlet_id == Outlet.id)
-            .join(Business, Outlet.business_id == Business.id)
+        canonical_memberships = (
+            db.query(BusinessMembership)
+            .join(Business, BusinessMembership.business_id == Business.id)
             .filter(
-                OutletMembership.user_id == current_user.id,
-                OutletMembership.role == "owner"
+                BusinessMembership.user_id == current_user.id,
+                BusinessMembership.role == "owner"
             )
             .all()
         )
 
-        if not owner_memberships:
+        if canonical_memberships:
+            source_memberships = [("canonical", m) for m in canonical_memberships]
+        else:
+            legacy_memberships = (
+                db.query(OutletMembership)
+                .join(Outlet, OutletMembership.outlet_id == Outlet.id)
+                .join(Business, Outlet.business_id == Business.id)
+                .filter(
+                    OutletMembership.user_id == current_user.id,
+                    OutletMembership.role == "owner"
+                )
+                .all()
+            )
+            source_memberships = [("legacy_outlet", m) for m in legacy_memberships]
+
+        if not source_memberships:
             raise ForbiddenError("You are not authorized as an owner of this business")
 
         owned_businesses = {}
-        for m in owner_memberships:
-            if m.outlet and m.outlet.business:
+        for source, m in source_memberships:
+            if source == "canonical":
+                owned_businesses[m.business.id] = m.business
+            elif m.outlet and m.outlet.business:
                 owned_businesses[m.outlet.business.id] = m.outlet.business
 
         if not owned_businesses:

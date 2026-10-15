@@ -13,7 +13,7 @@ NEON_EXPECTED_PROJECT_ID = "steep-hall-47922907"
 NEON_EXPECTED_BRANCH_ID = "br-weathered-cherry-b34085w9"
 NEON_FORBIDDEN_SOURCE_BRANCH_ID = "br-fancy-scene-b38p0d9u"
 NEON_EXPECTED_ENDPOINT_ID = "ep-lucky-band-b3tbsmfz"
-EXPECTED_MIGRATION_HEAD = "0012_platform_role_constraints"
+EXPECTED_MIGRATION_HEAD = "0014_add_missing_tenant_indexes"
 
 EXPECTED_PREEXISTING_USERS = {
     "admin@himachalhospitality.com": {"status": "active", "platform_role": "admin", "is_platform_admin": True},
@@ -384,7 +384,7 @@ def run_c1_bootstrap_test(
             raise RuntimeError(f"Audit log metadata mismatch: {meta}")
         print(f"7. Audit event verified:    YES (Audit ID: {created_audit_id}, Action: {audit_event.action})")
 
-        # 8. Alembic revision remains 0012_platform_role_constraints
+        # 8. Alembic revision remains 0014_add_missing_tenant_indexes
         rev = post_session.execute(text("SELECT version_num FROM alembic_version")).scalar()
         if rev != EXPECTED_MIGRATION_HEAD:
             raise RuntimeError(f"Alembic revision mismatch: found '{rev}', expected '{EXPECTED_MIGRATION_HEAD}'.")

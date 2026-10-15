@@ -79,7 +79,11 @@ def test_entitled_business_creates_outlet_within_limit(db_session):
 
 
 def test_business_at_outlet_limit_blocked_from_creating_outlet(db_session):
-    # Business on starter_pos (limit = 1)
+    """
+    Phase 1: max_outlets cap removed from add_outlet_to_business.
+    A starter_pos business (plan limit = 1) can now create additional outlets freely —
+    subscription enforcement is outlet-scoped, not a creation-time hard cap.
+    """
     data = platform_service.PlatformBusinessCreate(
         name="Starter Biz",
         public_slug="starter-outlet-1",
@@ -88,15 +92,22 @@ def test_business_at_outlet_limit_blocked_from_creating_outlet(db_session):
     )
     biz = platform_service.create_platform_business(db_session, data=data)
 
-    # Adding 2nd outlet fails because limit = 1
+    # Phase 1: No cap — 2nd outlet creation must succeed
     out2_data = PlatformOutletCreate(name="Outlet 2", public_slug="starter-outlet-2")
-    with pytest.raises(ValidationError) as exc_info:
-        platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
+    out2 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
+    assert out2.name == "Outlet 2", "Outlet creation must succeed regardless of plan outlet limit (cap removed)"
 
-    assert "reached its maximum allowed limit of 1 outlet(s)" in str(exc_info.value)
+    # And a 3rd outlet
+    out3_data = PlatformOutletCreate(name="Outlet 3", public_slug="starter-outlet-3")
+    out3 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out3_data)
+    assert out3.name == "Outlet 3", "Uncapped: any number of outlets can be created"
 
 
 def test_free_qr_operates_primary_outlet_but_cannot_create_second(db_session):
+    """
+    Phase 1: max_outlets cap removed. Even free_qr businesses can create additional outlets.
+    Entitlement for each outlet is governed by its own OutletSubscription, not a creation gate.
+    """
     data = platform_service.PlatformBusinessCreate(
         name="Free QR Biz",
         public_slug="free-qr-outlet-1",
@@ -105,20 +116,25 @@ def test_free_qr_operates_primary_outlet_but_cannot_create_second(db_session):
     )
     biz = platform_service.create_platform_business(db_session, data=data)
 
-    # Primary outlet exists and can be updated
+    # Primary outlet exists
     primary = db_session.query(Outlet).filter(Outlet.business_id == biz.id).first()
     assert primary is not None
 
-    # Creating 2nd outlet is denied
+    # Phase 1: 2nd outlet creation now succeeds (no cap)
     out2_data = PlatformOutletCreate(name="Second Outlet", public_slug="free-qr-outlet-2")
-    with pytest.raises(ValidationError) as exc_info:
-        platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
-
-    assert "maximum allowed limit of 1 outlet(s)" in str(exc_info.value)
+    out2 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
+    assert out2.name == "Second Outlet", "Uncapped: free_qr business can create a second outlet"
 
 
 def test_grant_and_restriction_overrides_modify_outlet_creation(db_session):
-    # Business on starter_pos (limit = 1)
+    """
+    Phase 1: Outlet creation is uncapped. Entitlement overrides (grant/restrict) now affect
+    entitlement resolution via EntitlementService, not outlet creation in platform_service.
+    This test verifies: (a) outlet creation is uncapped, (b) restriction override is still
+    enforced by EntitlementService for the outlets.max_count feature check.
+    """
+    from app.modules.subscriptions.service import EntitlementService
+
     data = platform_service.PlatformBusinessCreate(
         name="Override Biz",
         public_slug="override-outlet-1",
@@ -127,7 +143,12 @@ def test_grant_and_restriction_overrides_modify_outlet_creation(db_session):
     )
     biz = platform_service.create_platform_business(db_session, data=data)
 
-    # Grant override elevating limit to 5
+    # Phase 1: 2nd outlet creation succeeds without any grant override (no cap)
+    out2_data = PlatformOutletCreate(name="Outlet 2", public_slug="override-outlet-2")
+    out2 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
+    assert out2.name == "Outlet 2", "Uncapped: 2nd outlet creation must succeed without any grant"
+
+    # Grant override still reflected in EntitlementService
     grant = EntitlementOverride(
         id=uuid.uuid4(),
         business_id=biz.id,
@@ -139,12 +160,13 @@ def test_grant_and_restriction_overrides_modify_outlet_creation(db_session):
     db_session.add(grant)
     db_session.commit()
 
-    # Now 2nd outlet creation succeeds
-    out2_data = PlatformOutletCreate(name="Outlet 2", public_slug="override-outlet-2")
-    out2 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out2_data)
-    assert out2.name == "Outlet 2"
+    grant_result = EntitlementService.check_entitlement(
+        db_session, biz.id, "outlets.max_count"
+    )
+    assert grant_result.authorized, "Grant override must be authorized via EntitlementService"
+    assert grant_result.limit_value == 5, "Grant override must set limit_value=5"
 
-    # Restriction override added
+    # Restriction override blocks entitlement for outlets.max_count (but does NOT block creation)
     restrict = EntitlementOverride(
         id=uuid.uuid4(),
         business_id=biz.id,
@@ -156,12 +178,18 @@ def test_grant_and_restriction_overrides_modify_outlet_creation(db_session):
     db_session.add(restrict)
     db_session.commit()
 
-    # Creation of 3rd outlet denied by restriction override
-    out3_data = PlatformOutletCreate(name="Outlet 3", public_slug="override-outlet-3")
-    with pytest.raises(ValidationError) as exc_info:
-        platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out3_data)
+    restrict_result = EntitlementService.check_entitlement(
+        db_session, biz.id, "outlets.max_count"
+    )
+    assert not restrict_result.authorized, "Restriction override must deny outlets.max_count entitlement"
+    assert "RESTRICTION_OVERRIDE_ACTIVE" in restrict_result.reason
 
-    assert "RESTRICTION_OVERRIDE_ACTIVE" in str(exc_info.value)
+    # Outlet creation is still uncapped even with restriction override
+    out3_data = PlatformOutletCreate(name="Outlet 3", public_slug="override-outlet-3")
+    out3 = platform_service.add_outlet_to_business(db_session, business_id=biz.id, data=out3_data)
+    assert out3.name == "Outlet 3", "Phase 1: outlet creation is never blocked by entitlement checks"
+
+
 
 
 def test_suspended_business_blocked_from_outlet_creation(db_session):

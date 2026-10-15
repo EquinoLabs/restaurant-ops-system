@@ -70,7 +70,7 @@ except ImportError:
     NEON_FORBIDDEN_SOURCE_BRANCH_ID = "br-fancy-scene-b38p0d9u"
     NEON_EXPECTED_ENDPOINT_ID = "ep-lucky-band-b3tbsmfz"
     NEON_EXPECTED_DATABASE = "neondb"
-    EXPECTED_MIGRATION_HEAD = "0012_platform_role_constraints"
+    EXPECTED_MIGRATION_HEAD = "0014_add_missing_tenant_indexes"
 
     class TargetVerificationRefusal(ValidationError):
         """Raised when live target database fails identity verification."""
@@ -116,7 +116,7 @@ def verify_provisioning_target_connection(
       - Verifies 'neon.project_id' is 'steep-hall-47922907'.
       - Verifies 'neon.branch_id' is 'br-weathered-cherry-b34085w9' (and NOT forbidden source branch).
       - Verifies 'neon.endpoint_id' is 'ep-lucky-band-b3tbsmfz'.
-      - Verifies alembic_version table exists and version_num is '0012_platform_role_constraints'.
+      - Verifies alembic_version table exists and version_num is '0014_add_missing_tenant_indexes'.
     Fails closed if any attribute mismatches or if unexpected exceptions occur.
     """
     should_verify = enforce_neon if enforce_neon is not None else (target_env in ("production", "staging"))

@@ -4,8 +4,14 @@ from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.api.deps import get_current_user, RequireOutletRole
-from app.modules.staff.models import User, OutletMembership
+from app.api.deps import (
+    get_current_user,
+    RequireOutletRole,
+    RequireOutletEntitlement,
+    has_outlet_relationship,
+    verify_subresource_outlet_access,
+)
+from app.modules.staff.models import User
 from app.modules.menus.schemas import (
     AdminOutletMenuResponse,
     AdminMenuCategorySchema,
@@ -20,42 +26,46 @@ from app.modules.menus.schemas import (
 from app.modules.menus import admin_service
 from app.modules.audit import service as audit_service
 from app.modules.menus.models import MenuCategory, MenuItem
-from app.core.errors import NotFoundError, ForbiddenError
+from app.core.errors import NotFoundError
 
 router = APIRouter(tags=["admin-menu"])
 
 
-def _verify_item_membership(db: Session, item_id: uuid.UUID, user_id: uuid.UUID, allowed_roles: Optional[List[str]] = None) -> MenuItem:
+def _verify_item_membership(db: Session, item_id: uuid.UUID, user: User, allowed_roles: Optional[List[str]] = None) -> MenuItem:
     item = db.query(MenuItem).filter(MenuItem.id == item_id).first()
     if not item:
         raise NotFoundError(f"Menu item with ID '{item_id}' not found")
-    membership = db.query(OutletMembership).filter(
-        OutletMembership.outlet_id == item.outlet_id,
-        OutletMembership.user_id == user_id
-    ).first()
-    if not membership:
-        raise ForbiddenError("You do not have access to this outlet")
-    if not membership.outlet or not membership.outlet.business or membership.outlet.business.status != "active":
-        raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
-    if allowed_roles and membership.role not in allowed_roles:
-        raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
+    # Anti-probing: callers with no relationship to the item's outlet get the same
+    # not-found response as a missing item (no cross-tenant existence oracle).
+    if not has_outlet_relationship(db, item.outlet_id, user.id):
+        raise NotFoundError(f"Menu item with ID '{item_id}' not found")
+    verify_subresource_outlet_access(
+        db,
+        item.outlet_id,
+        user,
+        allowed_roles=allowed_roles,
+        feature_code="menu.digital",
+        write=True
+    )
     return item
 
 
-def _verify_category_membership(db: Session, category_id: uuid.UUID, user_id: uuid.UUID, allowed_roles: Optional[List[str]] = None) -> MenuCategory:
+def _verify_category_membership(db: Session, category_id: uuid.UUID, user: User, allowed_roles: Optional[List[str]] = None) -> MenuCategory:
     cat = db.query(MenuCategory).filter(MenuCategory.id == category_id).first()
     if not cat:
         raise NotFoundError(f"Category with ID '{category_id}' not found")
-    membership = db.query(OutletMembership).filter(
-        OutletMembership.outlet_id == cat.outlet_id,
-        OutletMembership.user_id == user_id
-    ).first()
-    if not membership:
-        raise ForbiddenError("You do not have access to this outlet")
-    if not membership.outlet or not membership.outlet.business or membership.outlet.business.status != "active":
-        raise ForbiddenError("This business account is currently suspended. Please contact platform support.")
-    if allowed_roles and membership.role not in allowed_roles:
-        raise ForbiddenError(f"Role '{membership.role}' is not authorized to perform this operation")
+    # Anti-probing: callers with no relationship to the category's outlet get the same
+    # not-found response as a missing category (no cross-tenant existence oracle).
+    if not has_outlet_relationship(db, cat.outlet_id, user.id):
+        raise NotFoundError(f"Category with ID '{category_id}' not found")
+    verify_subresource_outlet_access(
+        db,
+        cat.outlet_id,
+        user,
+        allowed_roles=allowed_roles,
+        feature_code="menu.digital",
+        write=True
+    )
     return cat
 
 
@@ -71,7 +81,7 @@ def get_admin_menu(outlet_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post(
     "/outlets/{outlet_id}/categories",
     response_model=AdminMenuCategorySchema,
-    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+    dependencies=[Depends(RequireOutletEntitlement(["owner", "manager"], "menu.digital", write=True))]
 )
 def create_category(
     outlet_id: uuid.UUID,
@@ -90,7 +100,7 @@ def update_category(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_category_membership(db, category_id=category_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    _verify_category_membership(db, category_id=category_id, user=current_user, allowed_roles=["owner", "manager"])
     cat = admin_service.update_category(db, category_id=category_id, actor_id=current_user.id, data=data)
     return AdminMenuCategorySchema.model_validate(cat)
 
@@ -98,7 +108,7 @@ def update_category(
 @router.post(
     "/outlets/{outlet_id}/items",
     response_model=AdminMenuItemSchema,
-    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+    dependencies=[Depends(RequireOutletEntitlement(["owner", "manager"], "menu.digital", write=True))]
 )
 def create_item(
     outlet_id: uuid.UUID,
@@ -117,7 +127,7 @@ def update_item(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    _verify_item_membership(db, item_id=item_id, user=current_user, allowed_roles=["owner", "manager"])
     item = admin_service.update_menu_item(db, item_id=item_id, actor_id=current_user.id, data=data)
     return AdminMenuItemSchema.model_validate(item)
 
@@ -129,7 +139,7 @@ def toggle_item_availability(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager", "waiter", "kitchen"])
+    _verify_item_membership(db, item_id=item_id, user=current_user, allowed_roles=["owner", "manager", "waiter", "kitchen"])
     item = admin_service.toggle_item_availability(
         db, item_id=item_id, actor_id=current_user.id, is_available=request.is_available
     )
@@ -139,7 +149,7 @@ def toggle_item_availability(
 @router.post(
     "/outlets/{outlet_id}/items/{item_id}/image",
     response_model=AdminMenuItemSchema,
-    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+    dependencies=[Depends(RequireOutletEntitlement(["owner", "manager"], "menu.digital", write=True))]
 )
 async def upload_item_image(
     outlet_id: uuid.UUID,
@@ -148,7 +158,7 @@ async def upload_item_image(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    _verify_item_membership(db, item_id=item_id, user=current_user, allowed_roles=["owner", "manager"])
     file_bytes = await file.read()
     item = admin_service.upload_item_image(
         db=db,
@@ -164,7 +174,7 @@ async def upload_item_image(
 @router.delete(
     "/outlets/{outlet_id}/items/{item_id}/image",
     response_model=AdminMenuItemSchema,
-    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+    dependencies=[Depends(RequireOutletEntitlement(["owner", "manager"], "menu.digital", write=True))]
 )
 def delete_item_image(
     outlet_id: uuid.UUID,
@@ -172,7 +182,7 @@ def delete_item_image(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_item_membership(db, item_id=item_id, user_id=current_user.id, allowed_roles=["owner", "manager"])
+    _verify_item_membership(db, item_id=item_id, user=current_user, allowed_roles=["owner", "manager"])
     item = admin_service.delete_item_image(
         db=db,
         outlet_id=outlet_id,

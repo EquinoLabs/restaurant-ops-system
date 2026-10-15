@@ -1,9 +1,9 @@
 import uuid
 from typing import Optional, List
 from sqlalchemy.orm import Session, joinedload
-from app.modules.staff.models import User, OutletMembership
+from app.modules.staff.models import User, OutletMembership, BusinessMembership
 from app.modules.outlets.models import Outlet
-from app.modules.staff.schemas import UserMeOut, OutletMembershipOut
+from app.modules.staff.schemas import UserMeOut, OutletMembershipOut, BusinessMembershipOut
 from app.core.security import verify_password, hash_password
 from app.core.errors import AuthenticationError, NotFoundError
 
@@ -33,7 +33,9 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
         .options(
             joinedload(User.memberships)
             .joinedload(OutletMembership.outlet)
-            .joinedload(Outlet.business)
+            .joinedload(Outlet.business),
+            joinedload(User.business_memberships)
+            .joinedload(BusinessMembership.business)
         )
         .filter(User.id == user_id)
         .first()
@@ -55,6 +57,28 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
                 )
             )
 
+    # Deterministic API contract: business memberships ordered by business creation
+    # time (unknown timestamps first), tie-broken by business id. Outlet memberships
+    # remain in relationship (insertion) order.
+    ordered_business_memberships = sorted(
+        user.business_memberships,
+        key=lambda m: (
+            m.business.created_at.isoformat() if (m.business and m.business.created_at) else "",
+            str(m.business_id),
+        ),
+    )
+
+    business_memberships_out = []
+    for bmem in ordered_business_memberships:
+        if bmem.business and bmem.business.status == "active":
+            business_memberships_out.append(
+                BusinessMembershipOut(
+                    business_id=bmem.business_id,
+                    business_name=bmem.business.name,
+                    role=bmem.role
+                )
+            )
+
     return UserMeOut(
         id=user.id,
         email=user.email,
@@ -62,6 +86,7 @@ def get_user_me_profile(db: Session, user_id: uuid.UUID) -> UserMeOut:
         status=user.status,
         is_platform_admin=user.is_platform_admin,
         platform_role=user.platform_role,
-        memberships=memberships_out
+        memberships=memberships_out,
+        business_memberships=business_memberships_out
     )
 

@@ -269,6 +269,23 @@ def create_public_order(
             message=f"Outlet with slug '{public_slug}' was not found or is inactive."
         )
 
+    # Subscription/entitlement gate: ordering requires an entitled plan and a live
+    # subscription status (expired/cancelled subscriptions keep read-only public menu
+    # browsing but must not accept orders). Public callers must not learn suspension
+    # or subscription state, so denials reuse the uniform not-found response.
+    from app.modules.subscriptions.service import EntitlementService
+    entitlement = EntitlementService.check_entitlement(
+        db=db,
+        business_id=outlet.business_id,
+        feature_code="ordering.customer",
+        outlet_id=outlet.id
+    )
+    if not entitlement.authorized:
+        raise NotFoundException(
+            code="OUTLET_NOT_FOUND",
+            message=f"Outlet with slug '{public_slug}' was not found or is inactive."
+        )
+
     request_hash = compute_request_hash(data)
 
     # 3. Check idempotency key if provided

@@ -67,7 +67,7 @@ if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "Preflight Refusal: Alembic DAG head verification failed. Multiple heads or unapproved migration drift detected."
 }
-Write-Host "[PREFLIGHT] Migration DAG positively verified at head '0012_platform_role_constraints'."
+Write-Host "[PREFLIGHT] Migration DAG positively verified at head '0014_add_missing_tenant_indexes'."
 
 # ------------------------------------------------------------------------------
 # 3. Environment State Preservation

@@ -1015,7 +1015,7 @@ def test_smoke_test_end_to_end_runner_with_teardown(db_session: Session):
     # Setup alembic_version table in SQLite
     db_session.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"))
     db_session.execute(text("DELETE FROM alembic_version"))
-    db_session.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0012_platform_role_constraints')"))
+    db_session.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0014_add_missing_tenant_indexes')"))
     db_session.commit()
 
     # Seed 4 canonical pre-existing users
@@ -1055,7 +1055,7 @@ def test_smoke_test_end_to_end_runner_blocks_on_existing_account(db_session: Ses
     # Setup alembic_version table
     db_session.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(32) NOT NULL)"))
     db_session.execute(text("DELETE FROM alembic_version"))
-    db_session.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0012_platform_role_constraints')"))
+    db_session.execute(text("INSERT INTO alembic_version (version_num) VALUES ('0014_add_missing_tenant_indexes')"))
     db_session.commit()
 
     # Seed 4 pre-existing users

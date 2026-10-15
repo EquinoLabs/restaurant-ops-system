@@ -4,8 +4,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.api.deps import get_current_user, RequireOutletRole
-from app.modules.staff.models import User, OutletMembership
+from app.api.deps import (
+    get_current_user,
+    RequireOutletRole,
+    RequireOutletEntitlement,
+    has_outlet_relationship,
+    verify_subresource_outlet_access,
+)
+from app.modules.staff.models import User
 from app.modules.tables.schemas import TableCreate, TableUpdate, TableOut
 from app.modules.tables import service as table_service
 from app.modules.tables.models import DiningTable
@@ -14,16 +20,21 @@ from app.core.errors import NotFoundError, ForbiddenError
 router = APIRouter(tags=["tables"])
 
 
-def _verify_table_membership(db: Session, table_id: uuid.UUID, user_id: uuid.UUID) -> DiningTable:
+def _verify_table_membership(db: Session, table_id: uuid.UUID, user: User) -> DiningTable:
     table = db.query(DiningTable).filter(DiningTable.id == table_id).first()
     if not table:
         raise NotFoundError(f"Table with ID '{table_id}' not found")
-    membership = db.query(OutletMembership).filter(
-        OutletMembership.outlet_id == table.outlet_id,
-        OutletMembership.user_id == user_id
-    ).first()
-    if not membership:
-        raise ForbiddenError("You do not have access to this outlet")
+    # Anti-probing: callers with no relationship to the table's outlet get the same
+    # not-found response as a missing table (no cross-tenant existence oracle).
+    if not has_outlet_relationship(db, table.outlet_id, user.id):
+        raise NotFoundError(f"Table with ID '{table_id}' not found")
+    membership = verify_subresource_outlet_access(
+        db,
+        table.outlet_id,
+        user,
+        allowed_roles=["owner", "manager", "waiter", "kitchen"],
+        feature_code="ordering.staff"
+    )
     if membership.role not in ["owner", "manager"]:
         raise ForbiddenError(f"Role '{membership.role}' is not authorized to modify tables")
     return table
@@ -42,7 +53,7 @@ def get_tables(outlet_id: uuid.UUID, db: Session = Depends(get_db)):
 @router.post(
     "/outlets/{outlet_id}/tables",
     response_model=TableOut,
-    dependencies=[Depends(RequireOutletRole(["owner", "manager"]))]
+    dependencies=[Depends(RequireOutletEntitlement(["owner", "manager"], "ordering.staff"))]
 )
 def create_table(
     outlet_id: uuid.UUID,
@@ -60,6 +71,6 @@ def update_table(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_table_membership(db, table_id=table_id, user_id=current_user.id)
+    _verify_table_membership(db, table_id=table_id, user=current_user)
     table = table_service.update_table(db, table_id=table_id, data=data)
     return TableOut.model_validate(table)

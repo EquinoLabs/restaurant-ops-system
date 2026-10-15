@@ -213,6 +213,20 @@ class OwnerSupportAction(BaseModel):
     message: Optional[str] = None
 
 
+class OwnerOutletSubscriptionItem(BaseModel):
+    outlet_id: uuid.UUID
+    outlet_name: str
+    source: str
+    status: str
+    plan_code: str
+    plan_name: str
+    trial_ends_at: Optional[datetime] = None
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+    is_current: bool = True
+
+
 class OwnerSubscriptionSummaryOut(BaseModel):
     business_id: uuid.UUID
     business_name: str
@@ -220,6 +234,7 @@ class OwnerSubscriptionSummaryOut(BaseModel):
     plan: OwnerPlanSummary
     subscription: OwnerSubscriptionDetail
     outlets: OwnerOutletUsage
+    outlet_subscriptions: List[OwnerOutletSubscriptionItem] = []
     features: List[OwnerFeatureItem]
     support_cta: OwnerSupportAction
 

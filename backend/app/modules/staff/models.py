@@ -25,6 +25,11 @@ class User(Base, TimestampMixin):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    business_memberships: Mapped[List["BusinessMembership"]] = relationship(
+        "BusinessMembership",
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
 
 
 
@@ -50,3 +55,27 @@ class OutletMembership(Base, TimestampMixin):
 
     user: Mapped["User"] = relationship("User", back_populates="memberships")
     outlet: Mapped["Outlet"] = relationship("Outlet")
+
+
+class BusinessMembership(Base, TimestampMixin):
+    __tablename__ = "business_memberships"
+    __table_args__ = (
+        UniqueConstraint("business_id", "user_id", name="uq_business_user_membership"),
+    )
+
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("businesses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+    role: Mapped[str] = mapped_column(String(30), nullable=False, default="owner")
+
+    user: Mapped["User"] = relationship("User", back_populates="business_memberships")
+    business = relationship("Business", backref="business_memberships")

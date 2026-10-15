@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Integer, Text, Boolean, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Integer, Text, Boolean, DateTime, ForeignKey, UniqueConstraint, Index, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ class Plan(Base, TimestampMixin):
 
     plan_features = relationship("PlanFeature", back_populates="plan", cascade="all, delete-orphan")
     subscriptions = relationship("BusinessSubscription", back_populates="plan")
+    outlet_subscriptions = relationship("OutletSubscription", back_populates="plan")
 
 
 class Feature(Base, TimestampMixin):
@@ -70,6 +71,41 @@ class BusinessSubscription(Base, TimestampMixin):
 
     business = relationship("Business", backref="subscriptions")
     plan = relationship("Plan", back_populates="subscriptions")
+
+
+class OutletSubscription(Base, TimestampMixin):
+    __tablename__ = "outlet_subscriptions"
+    __table_args__ = (
+        Index(
+            "uq_outlet_subscription_current",
+            "outlet_id",
+            unique=True,
+            sqlite_where=text("is_current = 1"),
+            postgresql_where=text("is_current = true"),
+        ),
+        Index("ix_outlet_subscriptions_status", "status"),
+    )
+
+    outlet_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("outlets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    business_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("plans.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="trial")
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    trial_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    outlet = relationship("Outlet", back_populates="outlet_subscriptions")
+    business = relationship("Business", back_populates="outlet_subscriptions")
+    plan = relationship("Plan", back_populates="outlet_subscriptions")
 
 
 class EntitlementOverride(Base, TimestampMixin):

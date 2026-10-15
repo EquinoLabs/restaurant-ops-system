@@ -125,7 +125,7 @@ def test_scheduled_cancellation_preserves_access_until_period_end(db_session):
         db_session, b.id, "ordering.staff", now=now + timedelta(days=16)
     )
     assert res2.authorized is False
-    assert res2.reason == "SUBSCRIPTION_EXPIRED"
+    assert res2.reason == "SUBSCRIPTION_CANCELLED"
 
 
 def test_immediate_cancellation_revokes_access_immediately(db_session):

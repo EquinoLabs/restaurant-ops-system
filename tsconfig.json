@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "types": ["vite/client", "node"],
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* Path Aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@roms/shared-types": ["packages/shared-types/src"],
+      "@roms/shared-types/*": ["packages/shared-types/src/*"],
+      "@roms/api-client": ["packages/api-client/src"],
+      "@roms/api-client/*": ["packages/api-client/src/*"],
+      "@roms/ui": ["packages/ui/src"],
+      "@roms/ui/*": ["packages/ui/src/*"]
+    },
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["apps", "packages"],
+  "exclude": ["**/__tests__/**", "**/dist/**", "node_modules"]
+}

@@ -1,7 +1,7 @@
 """
 ROMS Platform Governance — Isolated Test Database Migration Runner (OP-02)
 
-Applies verified Alembic migrations strictly up to head 0012_platform_role_constraints
+Applies verified Alembic migrations strictly up to head 0014_add_missing_tenant_indexes
 against an isolated, verified PostgreSQL test database.
 
 Usage (Stage C when explicitly authorized):

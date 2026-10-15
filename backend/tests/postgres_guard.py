@@ -51,7 +51,7 @@ FORBIDDEN_NAME_TOKENS: Set[str] = {
     "prod", "production", "live", "main", "master", "staging", "stage"
 }
 
-EXPECTED_MIGRATION_HEAD: str = "0012_platform_role_constraints"
+EXPECTED_MIGRATION_HEAD: str = "0014_add_missing_tenant_indexes"
 EXPECTED_ROOT_MIGRATION: str = "0001_initial_r1_schema"
 HARNESS_MARKER_TABLE: str = "roms_disposable_test_marker"
 HARNESS_MARKER_VERSION: str = "ROMS-OP02"

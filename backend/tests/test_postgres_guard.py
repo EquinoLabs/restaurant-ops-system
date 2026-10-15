@@ -127,7 +127,7 @@ def test_validate_postgres_test_url_success():
 
 def test_verify_migration_dag_head_actual_repository():
     # Points to actual alembic.ini in repository without database connection
-    # Must succeed verifying the linear DAG head 0012_platform_role_constraints
+    # Must succeed verifying the linear DAG head 0014_add_missing_tenant_indexes
     verify_migration_dag_head(
         alembic_ini_path="alembic.ini",
         expected_head=EXPECTED_MIGRATION_HEAD

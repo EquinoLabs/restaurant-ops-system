@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy.orm import Session, joinedload
 from app.modules.businesses.models import Business
 from app.modules.outlets.models import Outlet
-from app.modules.staff.models import User, OutletMembership
+from app.modules.staff.models import User, OutletMembership, BusinessMembership
 from app.modules.businesses.schemas import (
     PlatformBusinessCreate,
     PlatformOutletCreate,
@@ -20,7 +20,7 @@ from sqlalchemy import text, select, or_
 from sqlalchemy.exc import IntegrityError
 from app.db.base import utc_now
 from app.modules.audit.service import log_audit
-from app.modules.subscriptions.models import Plan, BusinessSubscription
+from app.modules.subscriptions.models import Plan, BusinessSubscription, OutletSubscription
 from app.modules.subscriptions.service import EntitlementService, compute_annual_period_end, ensure_utc
 
 PLAN_MAP = {
@@ -193,6 +193,20 @@ def create_platform_business(
     db.add(primary_outlet)
     db.flush()
 
+    if plan:
+        primary_sub = OutletSubscription(
+            outlet_id=primary_outlet.id,
+            business_id=business.id,
+            plan_id=plan.id,
+            status=business.subscription_status,
+            is_current=True,
+            trial_ends_at=business.trial_ends_at,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(primary_sub)
+        db.flush()
+
     try:
         log_audit(
             db=db,
@@ -220,6 +234,36 @@ def create_platform_business(
 
     db.refresh(business)
     return business
+
+
+def _propagate_subscription_to_outlets(
+    db: Session, business: Business, curr_sub_after: Optional[BusinessSubscription]
+) -> int:
+    outlet_subs = (
+        db.query(OutletSubscription)
+        .filter(
+            OutletSubscription.business_id == business.id,
+            OutletSubscription.is_current == True,
+        )
+        .all()
+    )
+
+    for outlet_sub in outlet_subs:
+        if curr_sub_after is not None:
+            outlet_sub.plan_id = curr_sub_after.plan_id
+            outlet_sub.status = curr_sub_after.status
+            outlet_sub.trial_ends_at = curr_sub_after.trial_ends_at
+            outlet_sub.current_period_start = curr_sub_after.current_period_start
+            outlet_sub.current_period_end = curr_sub_after.current_period_end
+            outlet_sub.cancel_at_period_end = curr_sub_after.cancel_at_period_end
+            outlet_sub.cancelled_at = curr_sub_after.cancelled_at
+        else:
+            outlet_sub.status = business.subscription_status or outlet_sub.status
+            outlet_sub.trial_ends_at = business.trial_ends_at
+
+    if outlet_subs:
+        db.flush()
+    return len(outlet_subs)
 
 
 def update_business_subscription(
@@ -633,6 +677,9 @@ def update_business_subscription(
         BusinessSubscription.is_current == True
     ).first()
 
+    outlet_sync_count = _propagate_subscription_to_outlets(db, business, curr_sub_after)
+    audit_metadata["outlet_subscriptions_synced"] = outlet_sync_count
+
     after_state = {
         "status": business.status,
         "subscription_status": business.subscription_status,
@@ -691,27 +738,18 @@ def add_outlet_to_business(
     if not business:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
 
-    # Entitlement Check 1: Feature Authorization
-    entitlement = EntitlementService.check_entitlement(db, business_id=business_id, feature_code="outlets.max_count")
-    if not entitlement.authorized:
-        if entitlement.reason == "BUSINESS_SUSPENDED":
-            raise ForbiddenError("This business account is currently suspended.")
-        raise ValidationError(
-            f"Business '{business.name}' is not entitled to create outlets. Reason: {entitlement.reason}"
-        )
-
-    # Entitlement Check 2: Numeric Capacity Limit
-    if entitlement.limit_value is not None:
-        current_count = db.query(Outlet).filter(Outlet.business_id == business_id).count()
-        if current_count >= entitlement.limit_value:
-            raise ValidationError(
-                f"Business '{business.name}' has reached its maximum allowed limit of {entitlement.limit_value} outlet(s)."
-            )
+    # Business Operational Status Check (Hard platform kill switch)
+    if business.status != "active":
+        raise ForbiddenError("This business account is currently suspended.")
 
     slug = data.public_slug.strip().lower()
     existing_slug = db.query(Outlet).filter(Outlet.public_slug == slug).first()
     if existing_slug:
         raise ValidationError(f"Public slug '{slug}' is already in use by another outlet.")
+
+    now = utc_now()
+
+    default_plan = resolve_plan(db, "starter_pos")
 
     outlet = Outlet(
         business_id=business_id,
@@ -720,10 +758,40 @@ def add_outlet_to_business(
         currency=data.currency,
         timezone=data.timezone,
         address=data.address.strip() if data.address else None,
-        status="active"
+        status="active",
+        created_at=now,
+        updated_at=now,
     )
     db.add(outlet)
     db.flush()
+
+    # Initialize independent 30-day trial subscription for newly created outlet
+    trial_ends = now + timedelta(days=30)
+    outlet_sub = OutletSubscription(
+        outlet_id=outlet.id,
+        business_id=business_id,
+        plan_id=default_plan.id,
+        status="trial",
+        is_current=True,
+        trial_ends_at=trial_ends,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(outlet_sub)
+    db.flush()
+
+    # Ensure existing business owners automatically retain owner access on the new outlet
+    owners = db.query(BusinessMembership).filter(
+        BusinessMembership.business_id == business_id,
+        BusinessMembership.role == "owner"
+    ).all()
+    for owner in owners:
+        existing_m = db.query(OutletMembership).filter(
+            OutletMembership.user_id == owner.user_id,
+            OutletMembership.outlet_id == outlet.id
+        ).first()
+        if not existing_m:
+            db.add(OutletMembership(user_id=owner.user_id, outlet_id=outlet.id, role="owner"))
 
     log_audit(
         db=db,
@@ -805,6 +873,18 @@ def assign_owner_to_outlet(
             role="owner"
         )
         db.add(membership)
+
+    biz_membership = db.query(BusinessMembership).filter(
+        BusinessMembership.user_id == user.id,
+        BusinessMembership.business_id == business_id
+    ).first()
+    if not biz_membership:
+        biz_membership = BusinessMembership(
+            user_id=user.id,
+            business_id=business_id,
+            role="owner"
+        )
+        db.add(biz_membership)
 
     db.flush()
 

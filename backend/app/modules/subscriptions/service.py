@@ -1,14 +1,14 @@
 import calendar
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Any
 from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.base import utc_now
 from app.modules.businesses.models import Business
 from app.modules.subscriptions.models import (
-    Plan, Feature, PlanFeature, BusinessSubscription, EntitlementOverride
+    Plan, Feature, PlanFeature, BusinessSubscription, EntitlementOverride, OutletSubscription
 )
 from app.modules.subscriptions.schemas import EntitlementCheckResult
 
@@ -42,11 +42,11 @@ def compute_annual_period_end(start_dt: datetime) -> datetime:
 class EntitlementService:
     @staticmethod
     def evaluate_subscription_status(
-        subscription: Optional[BusinessSubscription],
+        subscription: Optional[Any],
         now: Optional[datetime] = None
     ) -> str:
         """
-        Evaluates subscription status with 0-day grace period rules.
+        Evaluates subscription status with 0-day grace period rules and cancel_at_period_end.
         """
         if now is None:
             now = utc_now()
@@ -69,7 +69,7 @@ class EntitlementService:
         if status == "cancelled" or (
             cancelled_at is not None
             and cancelled_at <= now
-            and not subscription.cancel_at_period_end
+            and not getattr(subscription, "cancel_at_period_end", False)
         ):
             return "cancelled"
 
@@ -83,6 +83,9 @@ class EntitlementService:
 
         # Period expiration check for active / past_due (0-day grace, fail-closed if missing)
         if status in ("active", "past_due"):
+            if getattr(subscription, "cancel_at_period_end", False):
+                if current_period_end is not None and now >= current_period_end:
+                    return "cancelled"
             if current_period_end is None or now >= current_period_end:
                 return "expired"
             return status
@@ -239,16 +242,46 @@ class EntitlementService:
                 scope="none"
             )
 
-        sub = db.scalar(
-            select(BusinessSubscription)
-            .where(
-                and_(
-                    BusinessSubscription.business_id == business_id,
-                    BusinessSubscription.is_current == True
+        # 2. Outlet Operational Status Check
+        if outlet_id is not None:
+            from app.modules.outlets.models import Outlet
+            outlet = db.scalar(select(Outlet).where(Outlet.id == outlet_id))
+            if outlet and outlet.status != "active":
+                return EntitlementCheckResult(
+                    authorized=False,
+                    limit_value=None,
+                    reason="OUTLET_SUSPENDED",
+                    resolved_status=outlet.status,
+                    source="outlet_suspended",
+                    scope="outlet"
                 )
+
+        # 3. Single Source of Truth: Look up OutletSubscription first when outlet_id is present
+        sub = None
+        if outlet_id is not None:
+            sub = db.scalar(
+                select(OutletSubscription)
+                .where(
+                    and_(
+                        OutletSubscription.outlet_id == outlet_id,
+                        OutletSubscription.is_current == True
+                    )
+                )
+                .options(joinedload(OutletSubscription.plan))
             )
-            .options(joinedload(BusinessSubscription.plan))
-        )
+
+        # 4. Fallback to BusinessSubscription during transition or if no outlet_id provided
+        if sub is None:
+            sub = db.scalar(
+                select(BusinessSubscription)
+                .where(
+                    and_(
+                        BusinessSubscription.business_id == business_id,
+                        BusinessSubscription.is_current == True
+                    )
+                )
+                .options(joinedload(BusinessSubscription.plan))
+            )
 
         if sub:
             resolved_status = cls.evaluate_subscription_status(sub, now)
@@ -358,17 +391,31 @@ class EntitlementService:
             if not target_outlet or target_outlet.business_id != business_id:
                 raise ValidationError(f"Outlet '{outlet_id}' does not belong to business '{business_id}'.")
 
-        # Query active subscription
-        sub = db.scalar(
-            select(BusinessSubscription)
-            .where(
-                and_(
-                    BusinessSubscription.business_id == business_id,
-                    BusinessSubscription.is_current == True
+        # Query active subscription: check outlet-scoped subscription first
+        sub = None
+        if outlet_id:
+            sub = db.scalar(
+                select(OutletSubscription)
+                .where(
+                    and_(
+                        OutletSubscription.outlet_id == outlet_id,
+                        OutletSubscription.is_current == True
+                    )
                 )
+                .options(joinedload(OutletSubscription.plan))
             )
-            .options(joinedload(BusinessSubscription.plan))
-        )
+
+        if sub is None:
+            sub = db.scalar(
+                select(BusinessSubscription)
+                .where(
+                    and_(
+                        BusinessSubscription.business_id == business_id,
+                        BusinessSubscription.is_current == True
+                    )
+                )
+                .options(joinedload(BusinessSubscription.plan))
+            )
 
         if sub:
             resolved_status = cls.evaluate_subscription_status(sub, now)
@@ -811,6 +858,7 @@ class EntitlementService:
             OwnerPlanSummary,
             OwnerSubscriptionDetail,
             OwnerOutletUsage,
+            OwnerOutletSubscriptionItem,
             OwnerFeatureItem,
             OwnerSupportAction,
         )
@@ -944,6 +992,56 @@ class EntitlementService:
                 )
             )
 
+        outlet_rows = db.scalars(
+            select(Outlet).where(Outlet.business_id == business_id).order_by(Outlet.created_at, Outlet.id)
+        ).all()
+        current_outlet_subs = db.execute(
+            select(OutletSubscription, Plan)
+            .join(Plan, OutletSubscription.plan_id == Plan.id)
+            .where(
+                OutletSubscription.business_id == business_id,
+                OutletSubscription.is_current == True,
+            )
+        ).all()
+        outlet_sub_map = {row[0].outlet_id: row for row in current_outlet_subs}
+
+        outlet_subscription_items = []
+        for outlet in outlet_rows:
+            row = outlet_sub_map.get(outlet.id)
+            if row is not None:
+                osub, oplan = row[0], row[1]
+                outlet_subscription_items.append(
+                    OwnerOutletSubscriptionItem(
+                        outlet_id=outlet.id,
+                        outlet_name=outlet.name,
+                        source="outlet",
+                        status=cls.evaluate_subscription_status(osub, now),
+                        plan_code=oplan.code,
+                        plan_name=oplan.name,
+                        trial_ends_at=osub.trial_ends_at,
+                        current_period_start=osub.current_period_start,
+                        current_period_end=osub.current_period_end,
+                        cancel_at_period_end=osub.cancel_at_period_end,
+                        is_current=osub.is_current,
+                    )
+                )
+            else:
+                outlet_subscription_items.append(
+                    OwnerOutletSubscriptionItem(
+                        outlet_id=outlet.id,
+                        outlet_name=outlet.name,
+                        source="business",
+                        status=resolved_status,
+                        plan_code=plan_code,
+                        plan_name=plan_name,
+                        trial_ends_at=trial_ends_at,
+                        current_period_start=current_period_start,
+                        current_period_end=current_period_end,
+                        cancel_at_period_end=cancel_at_period_end,
+                        is_current=is_current,
+                    )
+                )
+
         # Support CTA derivation
         is_trial_expired = (resolved_status == "expired")
         
@@ -998,6 +1096,7 @@ class EntitlementService:
                 max_allowed=max_allowed_outlets,
                 is_limit_reached=is_limit_reached
             ),
+            outlet_subscriptions=outlet_subscription_items,
             features=feature_items,
             support_cta=support_cta
         )

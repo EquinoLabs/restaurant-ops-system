@@ -24,6 +24,14 @@ class OutletMembershipOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class BusinessMembershipOut(BaseModel):
+    business_id: uuid.UUID
+    business_name: str
+    role: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class UserMeOut(BaseModel):
     id: uuid.UUID
     email: str
@@ -32,6 +40,7 @@ class UserMeOut(BaseModel):
     is_platform_admin: bool = False
     platform_role: Optional[str] = None
     memberships: List[OutletMembershipOut]
+    business_memberships: List[BusinessMembershipOut] = []
 
     model_config = ConfigDict(from_attributes=True)
 
