@@ -20,6 +20,7 @@ vi.mock('@roms/api-client', async () => {
     fetchPlatformOutlet: vi.fn(),
     updatePlatformOutletProfile: vi.fn(),
     fetchBusinessEntitlements: vi.fn(),
+    fetchPlatformAuditLogs: vi.fn(),
   };
 });
 
@@ -92,8 +93,8 @@ describe('BusinessDetailPage', () => {
       expect(screen.getByText('Main Dining')).toBeDefined();
       expect(screen.getByText('/m/main-dining')).toBeDefined();
     });
-    expect(screen.getByText('Businesses')).toBeDefined();
-    expect(screen.getByText(/Outlets \(/)).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Back to Businesses' })).toBeDefined();
+    expect(screen.getByText('Assigned Outlets')).toBeDefined();
   });
 
   it('shows not-found panel when fetch returns 404', async () => {
@@ -120,12 +121,12 @@ describe('BusinessDetailPage', () => {
     });
   });
 
-  it('navigates to outlet detail when Manage Outlet is clicked', async () => {
+  it('navigates to outlet detail when Manage is clicked', async () => {
     (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
 
     renderBusinessDetail();
 
-    const manageBtn = await screen.findByText('Manage Outlet');
+    const manageBtn = await screen.findByText('Manage');
     fireEvent.click(manageBtn);
 
     expect(screen.getByText('Outlet Detail Route')).toBeDefined();
@@ -137,7 +138,7 @@ describe('BusinessDetailPage', () => {
 
     renderBusinessDetail();
 
-    fireEvent.click(await screen.findByText('Edit Name'));
+    fireEvent.click(await screen.findByText('Edit details'));
     const input = screen.getByDisplayValue('Valley Retreat');
     fireEvent.change(input, { target: { value: 'Valley Retreat Renamed' } });
     fireEvent.click(screen.getByText('Save'));
@@ -159,7 +160,7 @@ describe('BusinessDetailPage', () => {
 
     renderBusinessDetail();
 
-    fireEvent.click(await screen.findByText('Add Outlet'));
+    fireEvent.click(await screen.findByText('Add outlet'));
     fireEvent.change(screen.getByPlaceholderText('e.g. Hillside Dhaba'), { target: { value: 'New Branch' } });
     fireEvent.change(screen.getByPlaceholderText('e.g. hillside-dhaba'), { target: { value: 'new-branch' } });
     fireEvent.click(screen.getByText('Create Outlet'));
@@ -194,8 +195,60 @@ describe('BusinessDetailPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('No outlets created yet')).toBeDefined();
-      expect(screen.getByText('Outlets (0)')).toBeDefined();
+      expect(screen.getByText('Assigned Outlets')).toBeDefined();
     });
+  });
+
+  it('loads business-scoped audit events on the Activity tab', async () => {
+    (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
+    (apiClient.fetchPlatformAuditLogs as any).mockResolvedValue({
+      items: [
+        {
+          id: 'log-1',
+          business_id: 'biz-1',
+          business_name: 'Valley Retreat',
+          outlet_id: null,
+          outlet_name: null,
+          actor_user_id: 'u-1',
+          actor_display_name: 'Aarav Mehta',
+          actor_email: 'aarav@roms.internal',
+          action: 'business_updated',
+          entity_type: 'business',
+          entity_id: 'biz-1',
+          metadata_json: null,
+          created_at: '2026-10-10T10:30:00Z',
+        },
+      ],
+      total: 1,
+      limit: 25,
+      offset: 0,
+    });
+
+    renderBusinessDetail();
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Activity' }));
+
+    await waitFor(() => {
+      expect(apiClient.fetchPlatformAuditLogs).toHaveBeenCalledWith('tok-123', {
+        business_id: 'biz-1',
+        limit: 25,
+        offset: 0,
+      });
+      expect(screen.getByText('business_updated')).toBeDefined();
+      expect(screen.getByText(/Aarav Mehta/)).toBeDefined();
+    });
+  });
+
+  it('shows the subscription summary and link to the Subscriptions page', async () => {
+    (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
+
+    renderBusinessDetail();
+
+    fireEvent.click(await screen.findByRole('tab', { name: 'Subscription' }));
+
+    expect(screen.getByText('Outlet limit')).toBeDefined();
+    expect(screen.getByText('1 / 2 used')).toBeDefined();
+    expect(screen.getByText('Open Subscriptions')).toBeDefined();
   });
 });
 
@@ -212,12 +265,13 @@ describe('OutletDetailPage', () => {
 
     await waitFor(() => {
       expect(screen.getAllByText('Main Dining').length).toBeGreaterThan(0);
-      expect(screen.getByText('/m/main-dining')).toBeDefined();
+      expect(screen.getAllByText('/m/main-dining').length).toBeGreaterThan(0);
       expect(screen.getByText('Profile & Config')).toBeDefined();
       expect(screen.getByText('Subscription & Entitlements')).toBeDefined();
     });
-    const menuLink = screen.getByText('Open Public Menu ↗');
-    expect(menuLink.closest('a')?.getAttribute('href')).toBe('/m/main-dining');
+    const menuLinks = screen.getAllByRole('link', { name: '/m/main-dining' });
+    expect(menuLinks.length).toBeGreaterThan(0);
+    menuLinks.forEach((link) => expect(link.getAttribute('href')).toBe('/m/main-dining'));
   });
 
   it('shows not-found panel when fetch returns 404', async () => {
@@ -240,7 +294,7 @@ describe('OutletDetailPage', () => {
 
     const nameInput = await screen.findByDisplayValue('Main Dining');
     fireEvent.change(nameInput, { target: { value: 'Main Dining Hall' } });
-    fireEvent.click(screen.getByText('Save Profile'));
+    fireEvent.click(screen.getByText('Save changes'));
 
     await waitFor(() => {
       expect(apiClient.updatePlatformOutletProfile).toHaveBeenCalledWith(
@@ -259,7 +313,7 @@ describe('OutletDetailPage', () => {
 
     const tzInput = await screen.findByDisplayValue('Asia/Kolkata');
     fireEvent.change(tzInput, { target: { value: 'Not/AZone' } });
-    fireEvent.click(screen.getByText('Save Profile'));
+    fireEvent.click(screen.getByText('Save changes'));
 
     await waitFor(() => {
       expect(screen.getByText(/valid IANA identifier/)).toBeDefined();
@@ -340,5 +394,23 @@ describe('OutletDetailPage', () => {
       expect(screen.getByText('Failed to load entitlements')).toBeDefined();
       expect(screen.getByText('entitlements down')).toBeDefined();
     });
+  });
+
+  it('shows the unsaved-changes bar and discards edits without saving', async () => {
+    (apiClient.fetchPlatformOutlet as any).mockResolvedValue(sampleOutlet);
+
+    renderOutletDetail();
+
+    const nameInput = await screen.findByDisplayValue('Main Dining');
+    expect(screen.queryByText('You have unsaved changes')).toBeNull();
+
+    fireEvent.change(nameInput, { target: { value: 'Changed Name' } });
+    expect(screen.getByText('You have unsaved changes')).toBeDefined();
+
+    fireEvent.click(screen.getByText('Discard'));
+
+    expect(screen.getByDisplayValue('Main Dining')).toBeDefined();
+    expect(screen.queryByText('You have unsaved changes')).toBeNull();
+    expect(apiClient.updatePlatformOutletProfile).not.toHaveBeenCalled();
   });
 });

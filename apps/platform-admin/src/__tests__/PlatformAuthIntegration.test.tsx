@@ -27,10 +27,12 @@ describe('Platform Auth Integration Tests', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('SaaS Control Plane')).toBeDefined();
-    expect(screen.getByText('Internal Platform Operator Portal')).toBeDefined();
-    expect(screen.getByPlaceholderText('••••••••')).toBeDefined();
-    expect(screen.getByRole('button', { name: /Sign In to SaaS Control Plane/i })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Sign in to the platform' })).toBeDefined();
+    expect(
+      screen.getByText('Internal operations console for ROMS team members.')
+    ).toBeDefined();
+    expect(screen.getByLabelText('Password')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeDefined();
   });
 
   it('displays error message when login fails due to invalid credentials', async () => {
@@ -50,13 +52,13 @@ describe('Platform Auth Integration Tests', () => {
       </MemoryRouter>
     );
 
-    fireEvent.change(screen.getByPlaceholderText('admin@himachalhospitality.com'), {
+    fireEvent.change(screen.getByPlaceholderText('name@roms.internal'), {
       target: { value: 'wrong@example.com' },
     });
-    fireEvent.change(screen.getByPlaceholderText('••••••••'), {
+    fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'badpass' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Sign In to SaaS Control Plane/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
       expect(screen.getByText('Invalid email or password')).toBeDefined();
@@ -89,13 +91,13 @@ describe('Platform Auth Integration Tests', () => {
       </MemoryRouter>
     );
 
-    fireEvent.change(screen.getByPlaceholderText('admin@himachalhospitality.com'), {
+    fireEvent.change(screen.getByPlaceholderText('name@roms.internal'), {
       target: { value: 'staff@restaurant.com' },
     });
-    fireEvent.change(screen.getByPlaceholderText('••••••••'), {
+    fireEvent.change(screen.getByLabelText('Password'), {
       target: { value: 'pass123' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Sign In to SaaS Control Plane/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     await waitFor(() => {
       expect(screen.getByText(/Access Denied: Account does not have platform administrator privileges/i)).toBeDefined();

@@ -1,12 +1,92 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '@roms/api-client';
-import { fetchPlatformBusiness, updatePlatformBusinessProfile, createPlatformOutlet, assignPlatformOwner } from '@roms/api-client';
+import {
+  fetchPlatformBusiness,
+  updatePlatformBusinessProfile,
+  createPlatformOutlet,
+  assignPlatformOwner,
+  fetchPlatformAuditLogs,
+} from '@roms/api-client';
 import {
   PlatformBusiness,
   PlatformOutletCreatePayload,
   PlatformAssignOwnerPayload,
+  PlatformAuditLogItem,
 } from '@roms/shared-types';
+import { ArrowLeft, ExternalLink, Loader2, Pencil, Plus, X } from 'lucide-react';
+import {
+  Button,
+  DataTable,
+  InlineStateBanner,
+  StateBlock,
+  StatusBadge,
+  Tabs,
+  FormField,
+  opsInputClass,
+  type DataTableColumn,
+} from '../../components/ops-ui';
+import {
+  accountLabel,
+  accountTone,
+  formatCreatedAt,
+  subscriptionLabel,
+  subscriptionTone,
+} from './BusinessDirectory';
+
+type BusinessTab = 'overview' | 'outlets' | 'subscription' | 'activity';
+
+function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function planDisplayName(planName?: string | null): string {
+  if (!planName) return 'current';
+  return planName.charAt(0).toUpperCase() + planName.slice(1);
+}
+
+function SubscriptionSummaryRows({ business }: { business: PlatformBusiness }) {
+  const outlets = business.outlets || [];
+  return (
+    <dl className="flex flex-col text-[13px]">
+      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
+        <dt className="text-ops-text-secondary">Plan</dt>
+        <dd className="font-medium text-ops-text-primary">{business.plan_name || '—'}</dd>
+      </div>
+      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
+        <dt className="text-ops-text-secondary">Status</dt>
+        <dd>
+          <StatusBadge
+            tone={subscriptionTone(business.subscription_status)}
+            label={subscriptionLabel(business.subscription_status)}
+          />
+        </dd>
+      </div>
+      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
+        <dt className="text-ops-text-secondary">Outlet limit</dt>
+        <dd className="font-mono text-ops-text-primary tabular-nums">
+          {outlets.length} / {business.max_outlets ?? '∞'} used
+        </dd>
+      </div>
+      {business.trial_ends_at && (
+        <div className="flex items-center justify-between gap-3 py-2.5">
+          <dt className="text-ops-text-secondary">Trial ends</dt>
+          <dd className="font-mono text-ops-text-primary">
+            {formatCreatedAt(business.trial_ends_at)}
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+}
 
 export const BusinessDetailPage: React.FC = () => {
   const { businessId } = useParams<{ businessId: string }>();
@@ -17,6 +97,8 @@ export const BusinessDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<BusinessTab>('outlets');
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState('');
@@ -45,6 +127,11 @@ export const BusinessDetailPage: React.FC = () => {
   const [ownerError, setOwnerError] = useState<string | null>(null);
   const [ownerSuccess, setOwnerSuccess] = useState<string | null>(null);
 
+  const [activity, setActivity] = useState<PlatformAuditLogItem[]>([]);
+  const [activityTotal, setActivityTotal] = useState(0);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+
   const isOperator = user?.platform_role === 'operator';
 
   const loadBusiness = useCallback(async () => {
@@ -70,6 +157,31 @@ export const BusinessDetailPage: React.FC = () => {
   useEffect(() => {
     loadBusiness();
   }, [loadBusiness]);
+
+  const loadActivity = useCallback(async () => {
+    if (!token || !businessId) return;
+    try {
+      setActivityLoading(true);
+      setActivityError(null);
+      const response = await fetchPlatformAuditLogs(token, {
+        business_id: businessId,
+        limit: 25,
+        offset: 0,
+      });
+      setActivity(response.items);
+      setActivityTotal(response.total);
+    } catch (err: any) {
+      setActivityError(err.message || 'Failed to load activity.');
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [token, businessId]);
+
+  useEffect(() => {
+    if (activeTab === 'activity') {
+      loadActivity();
+    }
+  }, [activeTab, loadActivity]);
 
   const handleSaveName = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,248 +259,559 @@ export const BusinessDetailPage: React.FC = () => {
   };
 
   if (loading) {
-    return (
-      <div className="py-20 text-center text-slate-400">
-        <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-sm font-medium">Loading business details...</p>
-      </div>
-    );
+    return <StateBlock variant="loading" title="Loading business details..." />;
   }
 
   if (notFound) {
     return (
-      <div className="p-12 text-center text-slate-400 bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3">
-        <p className="text-base font-bold text-white">Business not found</p>
-        <p className="text-xs">The requested business does not exist or was removed.</p>
-        <Link
-          to="/platform/businesses"
-          className="inline-block mt-2 px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all"
-        >
-          Back to Business Directory
-        </Link>
-      </div>
+      <StateBlock
+        variant="not-found"
+        title="Business not found"
+        description="The requested business does not exist or was removed."
+        secondaryAction={
+          <Link
+            to="/platform/businesses"
+            className="inline-flex h-8 items-center rounded-md border border-ops-border bg-white px-3 text-[13px] font-medium text-ops-text-primary hover:bg-ops-canvas"
+          >
+            Back to Business Directory
+          </Link>
+        }
+      />
     );
   }
 
   if (error || !business) {
     return (
-      <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400">
-        <div className="flex items-center space-x-3 mb-3">
-          <svg className="w-6 h-6 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <h3 className="text-base font-bold">Failed to load business details</h3>
-        </div>
-        <p className="text-xs text-red-300 mb-4">{error}</p>
-        <button
-          onClick={loadBusiness}
-          className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-xs font-bold transition-colors"
-        >
-          Retry Loading
-        </button>
-      </div>
+      <StateBlock
+        variant="error"
+        title="Failed to load business details"
+        description={error || undefined}
+        actionLabel="Retry Loading"
+        onAction={loadBusiness}
+      />
     );
   }
 
   const outlets = business.outlets || [];
+  const activeOutlets = outlets.filter((o) => o.status === 'active').length;
+  const hasQuota = typeof business.max_outlets === 'number' && business.max_outlets > 0;
+  const capacityPct = hasQuota
+    ? Math.min(100, Math.round((outlets.length / (business.max_outlets as number)) * 100))
+    : null;
+
+  const openAddOutlet = () => {
+    setOutletError(null);
+    setIsAddOutletOpen(true);
+  };
+
+  const openEditName = () => {
+    setNameDraft(business.name);
+    setNameError(null);
+    setIsEditingName(true);
+    setActiveTab('overview');
+  };
+
+  const outletColumns: DataTableColumn<PlatformBusiness['outlets'][number]>[] = [
+    {
+      key: 'outlet',
+      header: 'Outlet',
+      width: '24%',
+      render: (outlet) => (
+        <span className="truncate font-medium text-ops-text-primary">{outlet.name}</span>
+      ),
+    },
+    {
+      key: 'publicUrl',
+      header: 'Public URL',
+      width: '20%',
+      render: (outlet) => (
+        <a
+          href={`/m/${outlet.public_slug}`}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 font-mono text-[12px] text-ops-accent hover:underline"
+        >
+          {`/m/${outlet.public_slug}`}
+          <ExternalLink className="h-3 w-3" aria-hidden="true" />
+        </a>
+      ),
+    },
+    {
+      key: 'address',
+      header: 'Address',
+      width: '22%',
+      render: (outlet) => (
+        <span className="block truncate text-ops-text-secondary">{outlet.address || '—'}</span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      width: '12%',
+      render: (outlet) => (
+        <StatusBadge tone={accountTone(outlet.status)} label={accountLabel(outlet.status)} />
+      ),
+    },
+    {
+      key: 'created',
+      header: 'Created',
+      width: '12%',
+      render: (outlet) => (
+        <span className="text-ops-text-secondary">{formatCreatedAt(outlet.created_at)}</span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      width: '16%',
+      render: (outlet) => (
+        <div className="flex items-center justify-end gap-3">
+          <button
+            type="button"
+            onClick={() => navigate(`/platform/outlets/${outlet.id}`)}
+            className="text-[13px] font-medium text-ops-accent hover:underline"
+          >
+            Manage
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setOwnerError(null);
+              setOwnerTarget({
+                businessId: business.id,
+                outletId: outlet.id,
+                outletName: outlet.name,
+              });
+            }}
+            className="text-[13px] font-medium text-ops-text-secondary hover:text-ops-text-primary"
+          >
+            Assign Owner
+          </button>
+        </div>
+      ),
+    },
+  ];
+
+  const activityColumns: DataTableColumn<PlatformAuditLogItem>[] = [
+    {
+      key: 'event',
+      header: 'Event',
+      width: '46%',
+      render: (log) => (
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate font-medium text-ops-text-primary">{log.action}</span>
+          <span className="mt-0.5 truncate font-mono text-[11px] text-ops-text-secondary">
+            {log.entity_type} · {log.entity_id}
+            {log.outlet_name ? ` · ${log.outlet_name}` : ''}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'actor',
+      header: 'Actor',
+      width: '30%',
+      render: (log) => (
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-ops-text-primary">
+            {log.actor_display_name || log.actor_email || '—'}
+          </span>
+          {log.actor_display_name && log.actor_email && (
+            <span className="mt-0.5 truncate text-[11px] text-ops-text-secondary">
+              {log.actor_email}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'created',
+      header: 'Time',
+      width: '24%',
+      render: (log) => (
+        <span className="text-ops-text-secondary">{formatDateTime(log.created_at)}</span>
+      ),
+    },
+  ];
+
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'outlets', label: 'Outlets' },
+    { id: 'subscription', label: 'Subscription' },
+    { id: 'activity', label: 'Activity' },
+  ];
 
   return (
-    <div className="space-y-6">
-      <nav className="flex items-center space-x-2 text-xs text-slate-500" aria-label="Breadcrumb">
-        <Link to="/platform/businesses" className="hover:text-indigo-300">Businesses</Link>
-        <span>/</span>
-        <span className="text-white font-semibold">{business.name}</span>
-      </nav>
+    <div className="space-y-4">
+      <Link
+        to="/platform/businesses"
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ops-accent hover:underline"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to Businesses
+      </Link>
 
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-800">
-        <div>
-          <h1 className="text-xl font-extrabold text-white tracking-tight">{business.name}</h1>
-          <div className="flex items-center space-x-3 mt-1 text-xs text-slate-400">
-            <span className="font-mono">{business.id}</span>
-            <span>Created {new Date(business.created_at).toLocaleDateString()}</span>
-            <span
-              className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                business.status === 'suspended'
-                  ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                  : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-              }`}
-            >
-              {business.status}
-            </span>
-            {business.subscription_status && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase border bg-sky-500/20 text-sky-400 border-sky-500/30">
-                {business.subscription_status}
-              </span>
-            )}
+      <div className="rounded-md border border-ops-border bg-white p-5">
+        <div className="flex flex-col justify-between gap-4 md:flex-row md:items-start">
+          <div className="flex flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <h1 className="text-xl font-semibold leading-7 tracking-tight text-ops-text-primary">
+                {business.name}
+              </h1>
+              <StatusBadge tone={accountTone(business.status)} label={accountLabel(business.status)} />
+              <StatusBadge
+                tone={subscriptionTone(business.subscription_status)}
+                label={subscriptionLabel(business.subscription_status)}
+              />
+            </div>
+            <p className="text-xs text-ops-text-secondary">
+              ID <span className="font-mono text-ops-text-primary">{business.id}</span>
+              <span className="mx-1.5">•</span>
+              Created {formatCreatedAt(business.created_at)}
+            </p>
           </div>
+          {!isOperator && (
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="secondary" onClick={openEditName}>
+                <Pencil className="h-4 w-4 text-ops-text-secondary" aria-hidden="true" />
+                Edit details
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-4">
+          <Tabs
+            tabs={tabs}
+            activeId={activeTab}
+            onChange={(id) => setActiveTab(id as BusinessTab)}
+          />
         </div>
       </div>
 
       {ownerSuccess && (
-        <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-medium flex items-center justify-between">
+        <div
+          role="status"
+          className="flex items-center justify-between gap-3 rounded-md border border-ops-status-active-bg bg-ops-status-active-bg/60 px-4 py-3 text-[13px] text-ops-status-active-text"
+        >
           <span>{ownerSuccess}</span>
-          <button onClick={() => setOwnerSuccess(null)} className="text-slate-400 hover:text-white ml-3">✕</button>
+          <button
+            type="button"
+            onClick={() => setOwnerSuccess(null)}
+            aria-label="Dismiss"
+            className="rounded p-1 text-ops-text-secondary hover:bg-white hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
         </div>
       )}
 
-      <section className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
-        <h2 className="text-sm font-bold text-white mb-4">Profile</h2>
-        {isEditingName ? (
-          <form onSubmit={handleSaveName} className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
-            <div className="flex-1 w-full">
-              <label className="block text-xs font-semibold uppercase text-slate-300">Business Name</label>
-              <input
-                type="text"
-                value={nameDraft}
-                onChange={(e) => setNameDraft(e.target.value)}
-                className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              {nameError && <p className="mt-1 text-xs text-red-400">{nameError}</p>}
+      {activeTab === 'overview' && (
+        <div className="grid gap-4 lg:grid-cols-12">
+          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-7">
+            <div className="mb-4 border-b border-ops-divider pb-3">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Profile</h2>
+              <p className="mt-0.5 text-xs text-ops-text-secondary">
+                Registered identity for this business on the platform.
+              </p>
             </div>
-            <div className="flex space-x-2">
-              <button
-                type="button"
-                onClick={() => { setIsEditingName(false); setNameError(null); }}
-                className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={nameSaving}
-                className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50"
-              >
-                {nameSaving ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </form>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="text-xs text-slate-500 uppercase font-semibold">Name</div>
-              <div className="text-base font-bold text-white mt-0.5">{business.name}</div>
-            </div>
-            {!isOperator && (
-              <button
-                onClick={() => { setNameDraft(business.name); setIsEditingName(true); }}
-                className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 text-xs font-semibold"
-              >
-                Edit Name
-              </button>
+            {isEditingName ? (
+              <form onSubmit={handleSaveName} className="space-y-3">
+                <FormField id="business-name" label="Business Name" required error={nameError}>
+                  <input
+                    type="text"
+                    value={nameDraft}
+                    onChange={(e) => setNameDraft(e.target.value)}
+                    className={opsInputClass}
+                  />
+                </FormField>
+                <div className="flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setIsEditingName(false);
+                      setNameError(null);
+                    }}
+                    disabled={nameSaving}
+                  >
+                    Cancel
+                  </Button>
+                  <Button type="submit" variant="primary" disabled={nameSaving}>
+                    {nameSaving ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold text-ops-text-secondary">Name</div>
+                  <div className="mt-0.5 text-base font-semibold text-ops-text-primary">
+                    {business.name}
+                  </div>
+                </div>
+                {!isOperator && (
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setNameDraft(business.name);
+                      setNameError(null);
+                      setIsEditingName(true);
+                    }}
+                  >
+                    Edit Name
+                  </Button>
+                )}
+              </div>
             )}
-          </div>
-        )}
-      </section>
+          </section>
 
-      <section className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
-          <h2 className="text-sm font-bold text-white">Outlets ({outlets.length})</h2>
-          <button
-            onClick={() => { setOutletError(null); setIsAddOutletOpen(true); }}
-            className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all flex items-center space-x-1.5"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
-            </svg>
-            <span>Add Outlet</span>
-          </button>
+          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-5">
+            <div className="mb-4 border-b border-ops-divider pb-3">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Subscription</h2>
+              <p className="mt-0.5 text-xs text-ops-text-secondary">
+                Current commercial state for this business.
+              </p>
+            </div>
+            <SubscriptionSummaryRows business={business} />
+          </section>
         </div>
+      )}
 
-        {outlets.length === 0 ? (
-          <div className="p-12 text-center text-slate-400 space-y-2">
-            <p className="text-sm font-semibold text-slate-300">No outlets created yet</p>
-            <p className="text-xs text-slate-500">Create the first outlet for this business to start serving customers.</p>
+      {activeTab === 'outlets' && (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col justify-between gap-3 rounded-md border border-ops-border bg-white p-4 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-ops-text-primary">Assigned Outlets</h2>
+                <span className="inline-flex h-5 items-center rounded bg-ops-canvas px-1.5 text-[11px] font-medium text-ops-text-secondary tabular-nums">
+                  {activeOutlets} / {outlets.length} Active
+                </span>
+              </div>
+              <p className="text-xs text-ops-text-secondary">
+                {hasQuota
+                  ? `${outlets.length} of ${business.max_outlets} allowable outlets provisioned on ${planDisplayName(business.plan_name)} plan.`
+                  : `${outlets.length} outlet${outlets.length === 1 ? '' : 's'} provisioned.`}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="primary" onClick={openAddOutlet}>
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                Add outlet
+              </Button>
+            </div>
           </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-800 text-[10px] uppercase text-slate-500">
-                  <th className="px-6 py-3 font-bold">Outlet</th>
-                  <th className="px-6 py-3 font-bold">Slug</th>
-                  <th className="px-6 py-3 font-bold">Address</th>
-                  <th className="px-6 py-3 font-bold">Status</th>
-                  <th className="px-6 py-3 font-bold text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {outlets.map((outlet) => (
-                  <tr key={outlet.id} className="border-b border-slate-800/60 last:border-b-0 hover:bg-slate-800/30 transition-colors">
-                    <td className="px-6 py-3 font-bold text-white">{outlet.name}</td>
-                    <td className="px-6 py-3 font-mono text-amber-400">/m/{outlet.public_slug}</td>
-                    <td className="px-6 py-3 text-slate-400 max-w-[240px] truncate">{outlet.address || '—'}</td>
-                    <td className="px-6 py-3">
-                      <span
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                          outlet.status === 'suspended'
-                            ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                            : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                        }`}
-                      >
-                        {outlet.status}
+
+          {outlets.length === 0 ? (
+            <div className="rounded-md border border-ops-border bg-white">
+              <div className="flex flex-col items-center gap-2 p-10 text-center">
+                <p className="text-sm font-semibold text-ops-text-primary">No outlets created yet</p>
+                <p className="text-xs text-ops-text-secondary">
+                  Create the first outlet for this business to start serving customers.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <DataTable
+              columns={outletColumns}
+              rows={outlets}
+              rowKey={(outlet) => outlet.id}
+              minWidth="840px"
+              footer={
+                <>
+                  <span>
+                    Showing {outlets.length} of {outlets.length} provisioned records
+                  </span>
+                  {hasQuota && (
+                    <span className="flex items-center gap-2">
+                      <span className="font-semibold text-ops-text-primary tabular-nums">
+                        Plan Capacity: {capacityPct}% utilized
                       </span>
-                    </td>
-                    <td className="px-6 py-3 text-right space-x-2 whitespace-nowrap">
-                      <button
-                        onClick={() => navigate(`/platform/outlets/${outlet.id}`)}
-                        className="px-3 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-semibold"
+                      <span className="text-ops-text-secondary">•</span>
+                      <Link
+                        to="/platform/plans"
+                        className="font-medium text-ops-accent hover:underline"
                       >
-                        Manage Outlet
-                      </button>
-                      <button
-                        onClick={() => {
-                          setOwnerError(null);
-                          setOwnerTarget({ businessId: business.id, outletId: outlet.id, outletName: outlet.name });
-                        }}
-                        className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold"
-                      >
-                        Assign Owner
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                        Upgrade to add more
+                      </Link>
+                    </span>
+                  )}
+                </>
+              }
+            />
+          )}
+        </div>
+      )}
+
+      {activeTab === 'subscription' && (
+        <div className="grid gap-4 lg:grid-cols-12">
+          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-7">
+            <div className="mb-4 border-b border-ops-divider pb-3">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Subscription</h2>
+              <p className="mt-0.5 text-xs text-ops-text-secondary">
+                Plan, status, outlet quota, and trial window for this business.
+              </p>
+            </div>
+            <SubscriptionSummaryRows business={business} />
+          </section>
+
+          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-5">
+            <div className="mb-4 border-b border-ops-divider pb-3">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Manage subscription</h2>
+            </div>
+            <p className="text-[13px] leading-5 text-ops-text-secondary">
+              Plan changes, billing cycles, trial windows, and status transitions are managed
+              from the Subscriptions page.
+            </p>
+            <Button
+              variant="secondary"
+              className="mt-4"
+              onClick={() => navigate('/platform/subscriptions')}
+            >
+              Open Subscriptions
+            </Button>
+          </section>
+        </div>
+      )}
+
+      {activeTab === 'activity' && (
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center justify-between rounded-md border border-ops-border bg-white p-4">
+            <div className="flex flex-col gap-0.5">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Activity</h2>
+              <p className="text-xs text-ops-text-secondary">
+                Audit events recorded against this business.
+              </p>
+            </div>
           </div>
-        )}
-      </section>
+
+          {activityLoading && (
+            <div
+              role="status"
+              className="flex items-center justify-center gap-2 rounded-md border border-ops-border bg-white p-8 text-[13px] text-ops-text-secondary"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Loading activity...
+            </div>
+          )}
+
+          {!activityLoading && activityError && (
+            <InlineStateBanner
+              variant="error"
+              message={`Failed to load activity — ${activityError}`}
+              action={
+                <Button variant="secondary" onClick={loadActivity}>
+                  Retry
+                </Button>
+              }
+            />
+          )}
+
+          {!activityLoading && !activityError && activity.length === 0 && (
+            <div className="rounded-md border border-ops-border bg-white">
+              <div className="flex flex-col items-center gap-2 p-10 text-center">
+                <p className="text-sm font-semibold text-ops-text-primary">
+                  No activity recorded yet
+                </p>
+                <p className="text-xs text-ops-text-secondary">
+                  Audit events for this business will appear here.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {!activityLoading && !activityError && activity.length > 0 && (
+            <DataTable
+              columns={activityColumns}
+              rows={activity}
+              rowKey={(log) => log.id}
+              minWidth="640px"
+              footer={
+                <span>
+                  Showing {activity.length} of {activityTotal} events
+                </span>
+              }
+            />
+          )}
+        </div>
+      )}
 
       {isAddOutletOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">Add Outlet to {business.name}</h3>
-              <button onClick={() => setIsAddOutletOpen(false)} className="text-slate-400 hover:text-white p-1">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[rgba(31,41,51,0.40)]" aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-outlet-title"
+            className="relative flex max-h-[90vh] w-full max-w-[480px] flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
+          >
+            <div className="flex items-center justify-between border-b border-ops-border p-5">
+              <h2 id="add-outlet-title" className="text-base font-semibold text-ops-text-primary">
+                Add Outlet to {business.name}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsAddOutletOpen(false)}
+                className="rounded p-1 text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                aria-label="Close"
+                disabled={outletSaving}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
-            <form onSubmit={handleCreateOutlet} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Outlet Name *</label>
+
+            <form onSubmit={handleCreateOutlet} className="flex-1 space-y-4 overflow-y-auto p-5">
+              <FormField id="outlet-name" label="Outlet Name" required>
                 <input
                   type="text"
                   required
                   value={outletForm.name}
                   onChange={(e) => setOutletForm({ ...outletForm, name: e.target.value })}
                   placeholder="e.g. Hillside Dhaba"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Public Slug *</label>
+              </FormField>
+
+              <FormField
+                id="outlet-slug"
+                label="Public Slug"
+                required
+                hint="Lowercase letters, numbers, and hyphens only."
+              >
                 <input
                   type="text"
                   required
                   value={outletForm.public_slug}
-                  onChange={(e) => setOutletForm({ ...outletForm, public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
+                  onChange={(e) =>
+                    setOutletForm({
+                      ...outletForm,
+                      public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-'),
+                    })
+                  }
                   placeholder="e.g. hillside-dhaba"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={`${opsInputClass} font-mono`}
                 />
-              </div>
-              {outletError && <p className="text-xs text-red-400">{outletError}</p>}
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
-                <button type="button" onClick={() => setIsAddOutletOpen(false)} className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
-                <button type="submit" disabled={outletSaving} className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">
+              </FormField>
+
+              {outletError && (
+                <p role="alert" className="text-xs text-ops-error">
+                  {outletError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 border-t border-ops-border pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIsAddOutletOpen(false)}
+                  disabled={outletSaving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={outletSaving}>
                   {outletSaving ? 'Creating...' : 'Create Outlet'}
-                </button>
+                </Button>
               </div>
             </form>
           </div>
@@ -396,52 +819,86 @@ export const BusinessDetailPage: React.FC = () => {
       )}
 
       {ownerTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">Assign Owner for {ownerTarget.outletName}</h3>
-              <button onClick={() => setOwnerTarget(null)} className="text-slate-400 hover:text-white p-1">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[rgba(31,41,51,0.40)]" aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assign-owner-title"
+            className="relative flex max-h-[90vh] w-full max-w-[480px] flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
+          >
+            <div className="flex items-center justify-between border-b border-ops-border p-5">
+              <h2 id="assign-owner-title" className="text-base font-semibold text-ops-text-primary">
+                Assign Owner for {ownerTarget.outletName}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setOwnerTarget(null)}
+                className="rounded p-1 text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                aria-label="Close"
+                disabled={ownerSaving}
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
-            <form onSubmit={handleAssignOwner} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Owner Display Name *</label>
+
+            <form onSubmit={handleAssignOwner} className="flex-1 space-y-4 overflow-y-auto p-5">
+              <FormField id="owner-display-name" label="Owner Display Name" required>
                 <input
                   type="text"
                   required
                   value={ownerForm.display_name || ''}
                   onChange={(e) => setOwnerForm({ ...ownerForm, display_name: e.target.value })}
                   placeholder="e.g. Ramesh Kumar"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Owner Login Email *</label>
+              </FormField>
+
+              <FormField id="owner-email" label="Owner Login Email" required>
                 <input
                   type="email"
                   required
                   value={ownerForm.email || ''}
                   onChange={(e) => setOwnerForm({ ...ownerForm, email: e.target.value })}
                   placeholder="owner@restaurant.com"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Initial Password *</label>
+              </FormField>
+
+              <FormField
+                id="owner-password"
+                label="Initial Password"
+                required
+                hint="Minimum 8 characters for provisioning."
+              >
                 <input
                   type="password"
                   required
                   value={ownerForm.password || ''}
                   onChange={(e) => setOwnerForm({ ...ownerForm, password: e.target.value })}
                   placeholder="••••••••••••"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
-              {ownerError && <p className="text-xs text-red-400">{ownerError}</p>}
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
-                <button type="button" onClick={() => setOwnerTarget(null)} className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
-                <button type="submit" disabled={ownerSaving} className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">
+              </FormField>
+
+              {ownerError && (
+                <p role="alert" className="text-xs text-ops-error">
+                  {ownerError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 border-t border-ops-border pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setOwnerTarget(null)}
+                  disabled={ownerSaving}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={ownerSaving}>
                   {ownerSaving ? 'Assigning...' : 'Assign Owner Account'}
-                </button>
+                </Button>
               </div>
             </form>
           </div>

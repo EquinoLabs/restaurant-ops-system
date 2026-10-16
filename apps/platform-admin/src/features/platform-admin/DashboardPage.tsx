@@ -4,6 +4,7 @@ import { useAuth, fetchPlatformBusinesses, fetchPlatformAuditLogs } from '@roms/
 import { PlatformBusiness, PlatformAuditLogItem, PlatformBusinessCreatePayload } from '@roms/shared-types';
 import { DashboardOverview } from './DashboardOverview';
 import { createPlatformBusiness } from '@roms/api-client';
+import { Button, FormField, opsInputClass } from '../../components/ops-ui';
 
 export const DashboardPage: React.FC = () => {
   const { token } = useAuth();
@@ -52,13 +53,26 @@ export const DashboardPage: React.FC = () => {
     e.preventDefault();
     if (!token) return;
     setProvisionError(null);
-    if (!bizForm.name.trim() || !bizForm.primary_outlet_name.trim() || !bizForm.public_slug.trim()) {
+    const slug = bizForm.public_slug.trim();
+    if (!bizForm.name.trim() || !bizForm.primary_outlet_name.trim() || !slug) {
       setProvisionError('Business name, primary outlet name, and public slug are required.');
+      return;
+    }
+    if (!/^[a-z0-9-]+$/.test(slug)) {
+      setProvisionError('Public slug may only contain lowercase letters, numbers, and hyphens.');
       return;
     }
     try {
       setIsSubmitting(true);
-      const created = await createPlatformBusiness(bizForm, token);
+      const created = await createPlatformBusiness(
+        {
+          ...bizForm,
+          name: bizForm.name.trim(),
+          public_slug: slug,
+          primary_outlet_name: bizForm.primary_outlet_name.trim(),
+        },
+        token
+      );
       setIsProvisionOpen(false);
       setBizForm({ name: '', primary_outlet_name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
       navigate(`/platform/businesses/${created.id}`);
@@ -82,52 +96,138 @@ export const DashboardPage: React.FC = () => {
           else navigate(`/platform/${tab}`);
         }}
         onOpenProvisionModal={() => { setProvisionError(null); setIsProvisionOpen(true); }}
+        onOpenBusiness={(businessId) => navigate(`/platform/businesses/${businessId}`)}
       />
 
       {isProvisionOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">Provision New SaaS Business</h3>
-              <button onClick={() => setIsProvisionOpen(false)} className="text-slate-400 hover:text-white p-1">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[rgba(31,41,51,0.40)]" aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dashboard-provision-title"
+            className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
+          >
+            <div className="flex items-center justify-between border-b border-ops-border p-5">
+              <h2
+                id="dashboard-provision-title"
+                className="text-base font-semibold text-ops-text-primary"
+              >
+                Add business
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsProvisionOpen(false)}
+                className="rounded p-1 text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                aria-label="Close"
+                disabled={isSubmitting}
+              >
+                ✕
+              </button>
             </div>
-            <form onSubmit={handleCreateBusinessSubmit} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Business / Company Name *</label>
+
+            <form onSubmit={handleCreateBusinessSubmit} className="flex-1 space-y-4 overflow-y-auto p-5">
+              <FormField id="dash-biz-name" label="Business name" required>
                 <input
+                  id="dash-biz-name"
                   type="text"
                   required
                   value={bizForm.name}
                   onChange={(e) => setBizForm({ ...bizForm, name: e.target.value })}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="e.g. Himalayan Hospitality Pvt Ltd"
+                  className={opsInputClass}
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Primary Outlet Name *</label>
+              </FormField>
+
+              <FormField id="dash-outlet-name" label="Primary outlet name" required>
                 <input
+                  id="dash-outlet-name"
                   type="text"
                   required
                   value={bizForm.primary_outlet_name}
-                  onChange={(e) => setBizForm({ ...bizForm, primary_outlet_name: e.target.value })}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onChange={(e) =>
+                    setBizForm({ ...bizForm, primary_outlet_name: e.target.value })
+                  }
+                  placeholder="e.g. Riverside Camp Restaurant"
+                  className={opsInputClass}
                 />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Public Slug *</label>
+              </FormField>
+
+              <FormField
+                id="dash-slug"
+                label="Public slug"
+                required
+                hint="Lowercase letters, numbers, and hyphens only."
+              >
                 <input
+                  id="dash-slug"
                   type="text"
                   required
                   value={bizForm.public_slug}
-                  onChange={(e) => setBizForm({ ...bizForm, public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  onChange={(e) =>
+                    setBizForm({
+                      ...bizForm,
+                      public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-'),
+                    })
+                  }
+                  placeholder="e.g. riverside-camp"
+                  className={opsInputClass}
                 />
+              </FormField>
+
+              <div className="grid grid-cols-2 gap-3">
+                <FormField id="dash-currency" label="Currency">
+                  <input
+                    id="dash-currency"
+                    type="text"
+                    value={bizForm.currency || ''}
+                    onChange={(e) => setBizForm({ ...bizForm, currency: e.target.value.toUpperCase() })}
+                    maxLength={3}
+                    placeholder="INR"
+                    className={`${opsInputClass} uppercase`}
+                  />
+                </FormField>
+                <FormField id="dash-timezone" label="Timezone">
+                  <input
+                    id="dash-timezone"
+                    type="text"
+                    value={bizForm.timezone || ''}
+                    onChange={(e) => setBizForm({ ...bizForm, timezone: e.target.value })}
+                    placeholder="Asia/Kolkata"
+                    className={opsInputClass}
+                  />
+                </FormField>
               </div>
-              {provisionError && <p className="text-xs text-red-400">{provisionError}</p>}
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
-                <button type="button" onClick={() => setIsProvisionOpen(false)} className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
-                <button type="submit" disabled={isSubmitting} className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">
-                  {isSubmitting ? 'Provisioning...' : 'Provision Business'}
-                </button>
+
+              <FormField id="dash-address" label="Address" hint="Optional">
+                <input
+                  id="dash-address"
+                  type="text"
+                  value={bizForm.address || ''}
+                  onChange={(e) => setBizForm({ ...bizForm, address: e.target.value })}
+                  placeholder="Kasol Highway, HP"
+                  className={opsInputClass}
+                />
+              </FormField>
+
+              {provisionError && (
+                <p role="alert" className="text-xs text-ops-error">
+                  {provisionError}
+                </p>
+              )}
+
+              <div className="flex justify-end gap-2 border-t border-ops-border pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIsProvisionOpen(false)}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={isSubmitting}>
+                  {isSubmitting ? 'Adding…' : 'Add business'}
+                </Button>
               </div>
             </form>
           </div>

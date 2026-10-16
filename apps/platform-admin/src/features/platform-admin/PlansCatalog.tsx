@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth, fetchPlatformPlans } from '@roms/api-client';
 import { PlatformPlan } from '@roms/shared-types';
+import { Info, Lock, RefreshCw, Search, Check } from 'lucide-react';
+import { Button, Drawer, DataTable, type DataTableColumn } from '../../components/ops-ui';
 
 interface PlansCatalogProps {
   token?: string;
@@ -91,230 +93,251 @@ export const PlansCatalog: React.FC<PlansCatalogProps> = ({ token: propToken }) 
     }
   };
 
+  const columns: DataTableColumn<PlatformPlan>[] = [
+    {
+      key: 'name',
+      header: 'Plan',
+      width: 'w-44',
+      render: (plan) => (
+        <div className="flex items-center gap-2">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              plan.is_active ? 'bg-ops-accent' : 'bg-ops-text-secondary'
+            }`}
+            aria-hidden="true"
+          />
+          <span className="font-medium text-ops-text-primary">{plan.name}</span>
+        </div>
+      ),
+    },
+    {
+      key: 'code',
+      header: 'Code',
+      width: 'w-32',
+      render: (plan) => (
+        <span className="rounded bg-ops-canvas px-1.5 py-0.5 font-mono text-[11px] text-ops-text-secondary">
+          {plan.code}
+        </span>
+      ),
+    },
+    {
+      key: 'description',
+      header: 'Description',
+      render: (plan) => (
+        <span className="block truncate text-ops-text-secondary">
+          {plan.description || 'No detailed description specified.'}
+        </span>
+      ),
+    },
+    {
+      key: 'features',
+      header: 'Included features',
+      width: 'w-36',
+      render: (plan) => (
+        <span className="text-ops-text-secondary">
+          {getPlanFeatureHighlights(plan.code).length} features
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      width: 'w-28',
+      render: (plan) =>
+        plan.is_active ? (
+          <span className="inline-flex h-5 items-center rounded bg-ops-canvas px-1.5 text-[11px] font-medium leading-none text-ops-accent">
+            Active
+          </span>
+        ) : (
+          <span className="inline-flex h-5 items-center rounded bg-ops-status-neutral-bg px-1.5 text-[11px] font-medium leading-none text-ops-status-neutral-text">
+            Inactive
+          </span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      align: 'right',
+      width: 'w-24',
+      render: (plan) => (
+        <Button
+          variant="ghost"
+          className="text-ops-accent hover:bg-ops-canvas hover:text-ops-accent-hover"
+          aria-label="Inspect Plan Details"
+          onClick={() => setSelectedPlan(plan)}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Top Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center space-x-3">
-            <h1 className="text-2xl font-black text-white tracking-tight">Plan Catalog</h1>
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-800 text-indigo-400 border border-slate-700">
-              {plans.length} Tiers Available
+    <div>
+      {/* Page header */}
+      <div className="mb-6 flex flex-col gap-3 border-b border-ops-border pb-4 md:flex-row md:items-start md:justify-between">
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-semibold leading-7 tracking-tight text-ops-text-primary">
+              Plans
+            </h1>
+            <span className="rounded bg-ops-status-neutral-bg px-2 py-0.5 text-[11px] font-medium text-ops-text-secondary">
+              Catalog
             </span>
           </div>
-          <p className="text-sm text-slate-400 mt-1">
-            Canonical commercial plans and entitlement packages available for restaurant tenants.
-          </p>
+          <p className="text-sm leading-5 text-ops-text-secondary">Plans available to customers.</p>
+          <div className="mt-1 flex w-fit items-center gap-2 rounded-md border border-ops-border bg-ops-canvas px-3 py-1.5 text-xs text-ops-text-secondary">
+            <Info className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>Plans are read-only for now.</span>
+          </div>
         </div>
-
-        <button
-          onClick={loadPlans}
-          disabled={loading}
-          className="inline-flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
-        >
-          <svg
-            className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          <span>Refresh Catalog</span>
-        </button>
-      </div>
-
-      {/* Informational Banner */}
-      <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-300 text-xs flex items-start space-x-3">
-        <svg className="w-5 h-5 flex-shrink-0 text-indigo-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <div>
-          <span className="font-bold text-white">Canonical Plan Tier Specifications: </span>
-          Plans define the core commercial capabilities offered to businesses. In accordance with platform governance,
-          plan definitions are canonical and managed via platform-level configuration migrations. Tenant-level subscriptions
-          can be modified in the Subscriptions section.
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-900/60 p-3 rounded-xl border border-slate-800">
-        <div className="relative flex-1 max-w-md">
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search plans by name, code, or description..."
-            className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-9 pr-4 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition"
+        <Button variant="secondary" onClick={loadPlans} disabled={loading}>
+          <RefreshCw
+            className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}
+            aria-hidden="true"
           />
-          <svg className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-          </svg>
+          Refresh Catalog
+        </Button>
+      </div>
+
+      {/* Catalog card */}
+      <div className="overflow-hidden rounded-md border border-ops-border bg-white">
+        {/* Toolbar */}
+        <div className="flex flex-col gap-3 border-b border-ops-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="font-semibold uppercase tracking-wider text-ops-text-primary">
+              Plan Catalog
+            </span>
+            <span className="text-ops-text-secondary">· {plans.length} tiers configured</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <Search
+                className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ops-text-secondary"
+                aria-hidden="true"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search plans by name, code, or description..."
+                className="h-8 w-64 rounded-md border border-ops-border bg-white pl-8 pr-3 text-[13px] text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              />
+            </div>
+            {searchQuery && (
+              <Button variant="ghost" onClick={() => setSearchQuery('')}>
+                Clear Search
+              </Button>
+            )}
+          </div>
         </div>
 
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="text-xs text-slate-400 hover:text-white transition px-2 py-1"
-          >
-            Clear Search
-          </button>
+        {/* Content */}
+        {loading ? (
+          <div className="py-12 text-center text-sm text-ops-text-secondary">
+            Loading canonical plans catalog...
+          </div>
+        ) : error ? (
+          <div className="m-4 rounded-md border border-ops-border bg-ops-status-critical-bg p-4">
+            <p className="text-sm font-semibold text-ops-status-critical-text">{error}</p>
+            <div className="mt-3">
+              <Button variant="secondary" onClick={loadPlans}>
+                Retry Loading
+              </Button>
+            </div>
+          </div>
+        ) : filteredPlans.length === 0 ? (
+          <div className="py-16 text-center">
+            <p className="text-sm font-semibold text-ops-text-primary">No Plans Found</p>
+            <p className="mt-1 text-xs text-ops-text-secondary">
+              No plans matched your filter criteria "{searchQuery}".
+            </p>
+          </div>
+        ) : (
+          <DataTable
+            columns={columns}
+            rows={filteredPlans}
+            rowKey={(plan) => plan.id}
+            minWidth="760px"
+            footer={
+              <span>
+                Showing {filteredPlans.length} of {plans.length} operational tiers
+              </span>
+            }
+          />
         )}
       </div>
 
-      {/* Main Content Area */}
-      {loading ? (
-        <div className="py-20 text-center">
-          <div className="inline-block w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="mt-3 text-xs text-slate-400 font-medium">Loading canonical plans catalog...</p>
-        </div>
-      ) : error ? (
-        <div className="p-6 rounded-xl bg-red-500/10 border border-red-500/20 text-center space-y-3">
-          <p className="text-sm font-semibold text-red-400">{error}</p>
-          <button
-            onClick={loadPlans}
-            className="px-4 py-1.5 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-300 text-xs font-semibold transition"
-          >
-            Retry Loading
-          </button>
-        </div>
-      ) : filteredPlans.length === 0 ? (
-        <div className="py-16 text-center bg-slate-900/40 rounded-xl border border-slate-800">
-          <svg className="w-12 h-12 text-slate-600 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-          </svg>
-          <p className="text-sm font-semibold text-slate-300">No Plans Found</p>
-          <p className="text-xs text-slate-500 mt-1">No plans matched your filter criteria "{searchQuery}".</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredPlans.map((plan) => {
-            const highlights = getPlanFeatureHighlights(plan.code);
-            return (
-              <div
-                key={plan.id}
-                className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-2xl p-5 flex flex-col justify-between transition-all duration-200 shadow-lg"
-              >
-                <div>
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-slate-400 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
-                        {plan.code}
-                      </span>
-                      <h3 className="text-lg font-bold text-white mt-2">{plan.name}</h3>
-                    </div>
-                    <span
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-md uppercase border ${
-                        plan.is_active
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : 'bg-slate-800 text-slate-400 border-slate-700'
-                      }`}
-                    >
-                      {plan.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-slate-400 mt-3 line-clamp-2 min-h-[32px]">
-                    {plan.description || 'No detailed description specified.'}
-                  </p>
-
-                  <div className="mt-5 pt-4 border-t border-slate-800/80 space-y-2">
-                    <div className="text-[11px] font-semibold text-slate-300 uppercase tracking-wider">
-                      Included Capabilities
-                    </div>
-                    {highlights.map((h, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-xs py-1">
-                        <span className="text-slate-400">{h.label}</span>
-                        <span className="font-semibold text-white">{h.highlight}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="mt-6 pt-4 border-t border-slate-800/80 flex items-center justify-between">
-                  <span className="text-[10px] font-mono text-slate-500">
-                    Sort Order: {plan.sort_order}
-                  </span>
-                  <button
-                    onClick={() => setSelectedPlan(plan)}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 text-xs font-semibold border border-indigo-500/30 transition"
-                  >
-                    Inspect Plan Details
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Plan Details Modal */}
-      {selectedPlan && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-5 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-              <div>
-                <span className="text-[10px] font-mono uppercase bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">
-                  {selectedPlan.code}
-                </span>
-                <h3 className="text-xl font-bold text-white mt-1">{selectedPlan.name}</h3>
-              </div>
-              <button
-                onClick={() => setSelectedPlan(null)}
-                aria-label="Close plan details"
-                className="text-slate-400 hover:text-white p-1 rounded-lg transition"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Description</label>
-                <p className="text-sm text-slate-200 mt-1 bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  {selectedPlan.description || 'No description provided.'}
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  <span className="text-slate-400 block">Plan ID</span>
-                  <span className="font-mono text-white text-[11px] mt-0.5 block truncate" title={selectedPlan.id}>
-                    {selectedPlan.id}
-                  </span>
-                </div>
-                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/80">
-                  <span className="text-slate-400 block">Status</span>
-                  <span className="font-semibold text-emerald-400 mt-0.5 block">
-                    {selectedPlan.is_active ? 'Active Canonical Tier' : 'Inactive'}
-                  </span>
-                </div>
-              </div>
-
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800/80 space-y-2.5">
-                <div className="text-xs font-bold text-white">Tier Capabilities & Limits</div>
-                {getPlanFeatureHighlights(selectedPlan.code).map((item, idx) => (
-                  <div key={idx} className="flex items-center justify-between text-xs py-1 border-b border-slate-800/50 last:border-0">
-                    <span className="text-slate-400">{item.label}</span>
-                    <span className="font-semibold text-slate-100">{item.highlight}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-2">
-              <button
-                onClick={() => setSelectedPlan(null)}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition"
-              >
-                Close
-              </button>
-            </div>
+      {/* Plan details drawer */}
+      <Drawer
+        open={selectedPlan !== null}
+        onClose={() => setSelectedPlan(null)}
+        title={selectedPlan ? selectedPlan.name : ''}
+        closeAriaLabel="Close plan details"
+        footer={
+          <div className="flex w-full justify-end">
+            <Button variant="secondary" onClick={() => setSelectedPlan(null)}>
+              Close
+            </Button>
           </div>
-        </div>
-      )}
+        }
+      >
+        {selectedPlan && (
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded bg-ops-canvas px-1.5 py-0.5 font-mono text-[11px] text-ops-text-secondary">
+                {selectedPlan.code}
+              </span>
+              {selectedPlan.is_active ? (
+                <span className="inline-flex h-5 items-center rounded bg-ops-canvas px-1.5 text-[11px] font-medium leading-none text-ops-accent">
+                  Active
+                </span>
+              ) : (
+                <span className="inline-flex h-5 items-center rounded bg-ops-status-neutral-bg px-1.5 text-[11px] font-medium leading-none text-ops-status-neutral-text">
+                  Inactive
+                </span>
+              )}
+            </div>
+
+            <p className="text-sm leading-5 text-ops-text-secondary">
+              {selectedPlan.description || 'No description provided.'}
+            </p>
+
+            <div className="flex items-start gap-2 rounded-md border border-ops-border bg-ops-canvas p-3">
+              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-ops-text-secondary" aria-hidden="true" />
+              <p className="text-xs leading-5 text-ops-text-secondary">
+                Plans are read-only for now. Contact platform engineering to modify tier
+                definitions. Plan definitions are canonical and managed via platform-level
+                configuration migrations. Tenant-level subscriptions can be modified in the
+                Subscriptions section.
+              </p>
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between pb-1">
+                <h3 className="text-sm font-semibold tracking-tight text-ops-text-primary">
+                  Included features
+                </h3>
+                <span className="text-[11px] font-medium uppercase text-ops-text-secondary">
+                  {getPlanFeatureHighlights(selectedPlan.code).length} Included
+                </span>
+              </div>
+              <ul className="flex flex-col gap-2">
+                {getPlanFeatureHighlights(selectedPlan.code).map((item, idx) => (
+                  <li key={idx} className="flex items-center gap-2 text-[13px]">
+                    <Check className="h-4 w-4 shrink-0 text-ops-accent" aria-hidden="true" />
+                    <span className="text-ops-text-primary">{item.highlight}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <p className="font-mono text-[11px] text-ops-text-secondary">
+              Plan ID {selectedPlan.id}
+            </p>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 };

@@ -151,7 +151,7 @@ describe('BusinessDirectory Component', () => {
       />
     );
 
-    expect(screen.getByText('Businesses & Outlets Directory')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Businesses' })).toBeDefined();
     expect(screen.getByPlaceholderText(/Search by business name/)).toBeDefined();
     expect(screen.getByText('Valley Retreat')).toBeDefined();
   });
@@ -168,12 +168,62 @@ describe('BusinessDirectory Component', () => {
     const searchInput = screen.getByPlaceholderText(/Search by business name/);
     fireEvent.change(searchInput, { target: { value: 'NonExistentSearch' } });
 
-    expect(screen.getByText('No businesses match the current search and filter criteria.')).toBeDefined();
+    expect(
+      screen.getByText('No businesses match the current search and filter criteria.')
+    ).toBeDefined();
 
     const clearBtn = screen.getByRole('button', { name: /Clear All Filters/i });
     fireEvent.click(clearBtn);
 
     expect(screen.getByText('Valley Retreat')).toBeDefined();
+  });
+
+  it('renders loading state via StateBlock when loading with no data', () => {
+    render(<BusinessDirectory businesses={[]} loading error={null} />);
+    expect(document.querySelector('[data-state-variant="loading"]')).toBeTruthy();
+  });
+
+  it('renders error state with retry when load fails with no data', () => {
+    const onRetry = vi.fn();
+    render(
+      <BusinessDirectory businesses={[]} loading={false} error="Network down" onRetry={onRetry} />
+    );
+    expect(screen.getByText('Could not load businesses')).toBeDefined();
+    expect(screen.getByText('Network down')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it('renders empty state when no businesses are registered', () => {
+    render(<BusinessDirectory businesses={[]} loading={false} error={null} />);
+    expect(screen.getByText('No businesses yet')).toBeDefined();
+  });
+
+  it('uses status badges and View action in the data table', () => {
+    render(
+      <BusinessDirectory
+        businesses={sampleBusinesses}
+        loading={false}
+        error={null}
+        onViewBusiness={vi.fn()}
+      />
+    );
+    expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: 'View' })).toBeDefined();
+  });
+
+  it('shows Add business action when provision handler is provided', () => {
+    const onOpenProvisionModal = vi.fn();
+    render(
+      <BusinessDirectory
+        businesses={sampleBusinesses}
+        loading={false}
+        error={null}
+        onOpenProvisionModal={onOpenProvisionModal}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /Add business/i }));
+    expect(onOpenProvisionModal).toHaveBeenCalled();
   });
 });
 

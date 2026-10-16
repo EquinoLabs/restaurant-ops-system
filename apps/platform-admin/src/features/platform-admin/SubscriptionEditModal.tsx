@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PlatformBusiness, PlatformSubscriptionUpdatePayload, PlatformPlan } from '@roms/shared-types';
 import { updatePlatformSubscription, fetchPlatformPlans } from '@roms/api-client';
+import { Button, Drawer, FormField, opsInputClass } from '../../components/ops-ui';
 
 export interface SubscriptionEditModalProps {
   business: PlatformBusiness | null;
@@ -279,366 +280,352 @@ export const SubscriptionEditModal: React.FC<SubscriptionEditModalProps> = ({
     mark_past_due_with_extension: 'Mark Past Due with Grace Period Extension',
   };
 
+  const diffRow = (label: string, oldValue: string, newValue: string) => (
+    <div
+      key={label}
+      className="flex items-center justify-between gap-3 border-b border-ops-divider py-2 last:border-b-0"
+    >
+      <span className="text-ops-text-secondary">{label}</span>
+      <span className="flex items-center gap-2 text-[13px]">
+        <span className="text-ops-text-secondary">{oldValue}</span>
+        <span className="text-ops-text-disabled" aria-hidden="true">
+          →
+        </span>
+        <span className="font-medium text-ops-text-primary">{newValue}</span>
+      </span>
+    </div>
+  );
+
+  const valueRow = (label: string, value: React.ReactNode) => (
+    <div
+      key={label}
+      className="flex items-center justify-between gap-3 border-b border-ops-divider py-2 last:border-b-0"
+    >
+      <span className="text-ops-text-secondary">{label}</span>
+      <span className="font-medium text-ops-text-primary">{value}</span>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100 overflow-hidden max-h-[90vh] flex flex-col">
-        {/* Modal Header */}
-        <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-          <div>
-            <h3 className="text-lg font-black text-white tracking-tight">
-              {isConfirming ? 'Confirm Subscription Update' : 'Manage Subscription & Status'}
-            </h3>
-            <p className="text-xs text-slate-400 mt-0.5">{business.name}</p>
-          </div>
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 disabled:opacity-50"
-            aria-label="Close Subscription Modal"
-          >
-            ✕
-          </button>
+    <Drawer
+      open={isOpen}
+      onClose={onClose}
+      title={isConfirming ? 'Confirm Subscription Update' : 'Manage Subscription & Status'}
+      subtitle={business.name}
+      footer={
+        isConfirming ? (
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => setIsConfirming(false)}
+              disabled={isSubmitting}
+            >
+              Back to Edit
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() =>
+                executeSubscriptionUpdate(
+                  maxOutlets.trim() ? parseInt(maxOutlets.trim(), 10) : null
+                )
+              }
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? 'Applying…' : 'Confirm & Apply Changes'}
+            </Button>
+          </>
+        ) : (
+          <>
+            <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              form="subscription-edit-form"
+              disabled={isSubmitting}
+            >
+              Review changes
+            </Button>
+          </>
+        )
+      }
+    >
+      {error && (
+        <div
+          role="alert"
+          className="rounded-md border border-ops-status-critical-bg bg-ops-status-critical-bg/40 p-3 text-[13px] text-ops-error"
+        >
+          {error}
         </div>
+      )}
 
-        {error && (
-          <div className="mt-4 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium flex items-start space-x-2">
-            <svg className="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span>{error}</span>
-          </div>
-        )}
+      {isConfirming ? (
+        <div className="space-y-2 rounded-md border border-ops-border bg-ops-canvas p-4 text-[13px]">
+          <p className="pb-1 font-medium text-ops-text-primary">
+            Please review the proposed subscription changes before applying:
+          </p>
 
-        <div className="overflow-y-auto flex-1 pr-1">
-          {isConfirming ? (
-            /* Confirmation Step Diff View */
-            <div className="mt-4 space-y-4">
-              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3 text-xs">
-                <p className="text-slate-300 font-semibold mb-2">
-                  Please review the proposed subscription changes before applying:
-                </p>
+          {diffRow('Operation / Action:', '', actionLabels[actionType] || actionType)}
 
-                <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                  <span className="text-slate-400">Operation / Action:</span>
-                  <span className="font-bold text-indigo-400">{actionLabels[actionType] || actionType}</span>
-                </div>
+          {!actionType
+            ? diffRow(
+                'Subscription Status:',
+                business.subscription_status || '—',
+                subscriptionStatus
+              )
+            : null}
 
-                {!actionType ? (
-                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                    <span className="text-slate-400">Subscription Status:</span>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-slate-500 uppercase">{business.subscription_status}</span>
-                      <span className="text-slate-600">➔</span>
-                      <span className="font-bold text-indigo-400 uppercase">{subscriptionStatus}</span>
-                    </div>
-                  </div>
-                ) : null}
+          {diffRow('Operational Status:', business.status, status)}
+          {diffRow('Plan Tier:', business.plan_name || 'None', planName.trim() || 'None')}
 
-                <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                  <span className="text-slate-400">Operational Status:</span>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-slate-500 uppercase">{business.status}</span>
-                    <span className="text-slate-600">➔</span>
-                    <span className="font-bold text-emerald-400 uppercase">{status}</span>
-                  </div>
-                </div>
+          {['activate', 'renew', 'change_plan_new_term'].includes(actionType) && (
+            <>
+              {valueRow(
+                'Contractual Start:',
+                currentPeriodStart || 'Today (Immediate)'
+              )}
+              {valueRow('Contractual End (1 Year):', currentPeriodEnd)}
+            </>
+          )}
 
-                <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                  <span className="text-slate-400">Plan Tier:</span>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-slate-500">{business.plan_name || 'None'}</span>
-                    <span className="text-slate-600">➔</span>
-                    <span className="font-bold text-white">{planName.trim() || 'None'}</span>
-                  </div>
-                </div>
+          {actionType === 'mark_past_due_with_extension' &&
+            valueRow('Extended Period End:', currentPeriodEnd)}
 
-                {['activate', 'renew', 'change_plan_new_term'].includes(actionType) && (
-                  <>
-                    <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                      <span className="text-slate-400">Contractual Start:</span>
-                      <span className="font-bold text-white">{currentPeriodStart || 'Today (Immediate)'}</span>
-                    </div>
-                    <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                      <span className="text-slate-400">Contractual End (1 Year):</span>
-                      <span className="font-bold text-indigo-400">{currentPeriodEnd}</span>
-                    </div>
-                  </>
-                )}
-
-                {actionType === 'mark_past_due_with_extension' && (
-                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                    <span className="text-slate-400">Extended Period End:</span>
-                    <span className="font-bold text-amber-400">{currentPeriodEnd}</span>
-                  </div>
-                )}
-
-                {(!actionType || actionType === 'extend_trial') && trialEndsAt.trim() && (
-                  <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                    <span className="text-slate-400">Trial Expiration:</span>
-                    <div className="flex items-center space-x-2">
-                      <span className="text-slate-500">
-                        {business.trial_ends_at ? new Date(business.trial_ends_at).toLocaleDateString() : 'None'}
-                      </span>
-                      <span className="text-slate-600">➔</span>
-                      <span className="font-bold text-amber-400">
-                        {new Date(trialEndsAt.trim()).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between py-1.5 border-b border-slate-800/80">
-                  <span className="text-slate-400">Max Outlets:</span>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-slate-500">{business.max_outlets ?? '∞'}</span>
-                    <span className="text-slate-600">➔</span>
-                    <span className="font-bold text-white">{maxOutlets.trim() ? maxOutlets.trim() : '∞'}</span>
-                  </div>
-                </div>
-
-                {reason.trim() && (
-                  <div className="py-1.5">
-                    <span className="text-slate-400 block mb-1">Administrative Reason:</span>
-                    <span className="text-slate-200 italic font-mono bg-slate-900 p-2 rounded block">
-                      {reason.trim()}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-end space-x-3">
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => setIsConfirming(false)}
-                  className="px-4 py-2.5 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-800 transition-colors disabled:opacity-50"
-                >
-                  Back to Edit
-                </button>
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => executeSubscriptionUpdate(maxOutlets.trim() ? parseInt(maxOutlets.trim(), 10) : null)}
-                  className="px-4 py-2.5 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-50 flex items-center space-x-2"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                      <span>Applying Changes...</span>
-                    </>
-                  ) : (
-                    <span>Confirm & Apply Changes</span>
-                  )}
-                </button>
-              </div>
+          {(!actionType || actionType === 'extend_trial') && trialEndsAt.trim() && (
+            <div
+              key="trial"
+              className="flex items-center justify-between gap-3 border-b border-ops-divider py-2 last:border-b-0"
+            >
+              <span className="text-ops-text-secondary">Trial Expiration:</span>
+              <span className="flex items-center gap-2 text-[13px]">
+                <span className="text-ops-text-secondary">
+                  {business.trial_ends_at
+                    ? new Date(business.trial_ends_at).toLocaleDateString()
+                    : 'None'}
+                </span>
+                <span className="text-ops-text-disabled" aria-hidden="true">
+                  →
+                </span>
+                <span className="font-medium text-ops-text-primary">
+                  {new Date(trialEndsAt.trim()).toLocaleDateString()}
+                </span>
+              </span>
             </div>
-          ) : (
-            /* Form Controls View */
-            <form onSubmit={handleNextOrSubmit} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">
-                  Lifecycle Action Mode
-                </label>
-                <select
-                  value={actionType}
-                  onChange={(e) => setActionType(e.target.value)}
-                  className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Standard Account & Limits Edit (Default)</option>
-                  <option value="activate">Activate Paid Subscription (1-Year Term)</option>
-                  <option value="renew">Renew Annual Subscription</option>
-                  <option value="change_plan">Change Plan Tier (Keep Period Boundaries)</option>
-                  <option value="change_plan_new_term">Change Plan Tier (Establish New 1-Year Term)</option>
-                  <option value="extend_trial">Extend Evaluation Trial</option>
-                  <option value="schedule_cancellation">Schedule Cancellation at Period End</option>
-                  <option value="revoke_scheduled_cancellation">Revoke Scheduled Cancellation</option>
-                  <option value="cancel_immediately">Cancel Immediately</option>
-                  <option value="mark_past_due">Mark Past Due</option>
-                  <option value="mark_past_due_with_extension">Mark Past Due with Grace Period Extension</option>
-                </select>
-                <p className="text-[10px] text-slate-500 mt-1">
-                  Choose a contractual action to create a new immutable subscription record or manage status.
-                </p>
-              </div>
+          )}
 
-              {!actionType && (
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Subscription Status *
-                  </label>
-                  <select
-                    value={subscriptionStatus}
-                    onChange={(e) => setSubscriptionStatus(e.target.value)}
-                    className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="trial">Trial (Evaluation Period)</option>
-                    <option value="active">Active (Paid Subscription)</option>
-                    <option value="past_due">Past Due (Payment Overdue)</option>
-                    <option value="cancelled">Cancelled (Terminated Subscription)</option>
-                  </select>
-                </div>
-              )}
+          {diffRow(
+            'Max Outlets:',
+            business.max_outlets !== null && business.max_outlets !== undefined
+              ? String(business.max_outlets)
+              : '∞',
+            maxOutlets.trim() ? maxOutlets.trim() : '∞'
+          )}
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">
-                  Account Operational Status *
-                </label>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                  className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="active">Active (Operational Access Allowed)</option>
-                  <option value="suspended">Suspended (Access Restricted)</option>
-                </select>
-              </div>
-
-              {(!actionType || ['activate', 'renew', 'change_plan', 'change_plan_new_term'].includes(actionType)) && (
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Plan Tier Name
-                  </label>
-                  <select
-                    value={planName}
-                    onChange={(e) => setPlanName(e.target.value)}
-                    className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">No Plan Tier Set</option>
-                    {availablePlans.map((plan) => (
-                      <option key={plan.code} value={plan.code}>
-                        {plan.name} ({plan.code})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Annual Contract Dates Controls */}
-              {['activate', 'renew', 'change_plan_new_term'].includes(actionType) && (
-                <div className="p-3.5 bg-slate-950/70 rounded-xl border border-slate-800 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-indigo-300 uppercase">
-                      Annual Contract Period (1 Calendar Year)
-                    </span>
-                    <button
-                      type="button"
-                      onClick={handleCalculatePeriodEnd}
-                      className="px-2 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 text-indigo-300 text-[10px] font-bold transition-colors"
-                      title="Auto-calculate exact 1-year period end (leap-year aware)"
-                    >
-                      📅 Calculate 1-Year End
-                    </button>
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-400">
-                      Contractual Period Start Date *
-                    </label>
-                    <input
-                      type="date"
-                      value={currentPeriodStart}
-                      onChange={(e) => setCurrentPeriodStart(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-[11px] font-medium text-slate-400">
-                      Contractual Period End Date (Strictly 1 Year) *
-                    </label>
-                    <input
-                      type="date"
-                      value={currentPeriodEnd}
-                      onChange={(e) => setCurrentPeriodEnd(e.target.value)}
-                      className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <p className="text-[10px] text-slate-500 mt-1">
-                      Must match calendar 1-year date (e.g., leap days Feb 29 ➔ Feb 28).
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              {actionType === 'mark_past_due_with_extension' && (
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Extended Grace Period End Date *
-                  </label>
-                  <input
-                    type="date"
-                    value={currentPeriodEnd}
-                    onChange={(e) => setCurrentPeriodEnd(e.target.value)}
-                    className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              )}
-
-              {(!actionType || actionType === 'extend_trial') && (
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Trial Expiration Date {actionType === 'extend_trial' ? '*' : '(Optional)'}
-                  </label>
-                  <input
-                    type="date"
-                    value={trialEndsAt}
-                    onChange={(e) => setTrialEndsAt(e.target.value)}
-                    className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-              )}
-
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">
-                  Max Allowed Outlets (Leave empty for unlimited)
-                </label>
-                <input
-                  type="number"
-                  min="1"
-                  value={maxOutlets}
-                  onChange={(e) => setMaxOutlets(e.target.value)}
-                  placeholder="e.g. 3 (blank = unlimited)"
-                  className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              {(actionType || '') && (
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">
-                    Administrative Reason {['cancel_immediately', 'mark_past_due_with_extension'].includes(actionType) ? '*' : '(Optional)'}
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                    placeholder={
-                      ['cancel_immediately', 'mark_past_due_with_extension'].includes(actionType)
-                        ? 'Mandatory reason for this lifecycle transition...'
-                        : 'Optional audit note for this change...'
-                    }
-                    className="mt-1.5 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                  />
-                </div>
-              )}
-
-              <div className="pt-4 border-t border-slate-800 flex items-center justify-end space-x-3">
-                <button
-                  type="button"
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold hover:bg-slate-800 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/20"
-                >
-                  Review Changes
-                </button>
-              </div>
-            </form>
+          {reason.trim() && (
+            <div className="py-2">
+              <span className="mb-1 block text-ops-text-secondary">Administrative Reason:</span>
+              <span className="block rounded-md border border-ops-divider bg-white p-2 font-mono text-[12px] text-ops-text-primary">
+                {reason.trim()}
+              </span>
+            </div>
           )}
         </div>
-      </div>
-    </div>
+      ) : (
+        <form
+          id="subscription-edit-form"
+          onSubmit={handleNextOrSubmit}
+          className="space-y-4"
+        >
+          <FormField
+            id="sub-action-mode"
+            label="Lifecycle Action Mode"
+            hint="Choose a contractual action to create a new immutable subscription record or manage status."
+          >
+            <select
+              id="sub-action-mode"
+              value={actionType}
+              onChange={(e) => setActionType(e.target.value)}
+              className={opsInputClass}
+            >
+              <option value="">Standard account & limits edit (default)</option>
+              <option value="activate">Activate paid subscription (1-year term)</option>
+              <option value="renew">Renew annual subscription</option>
+              <option value="change_plan">Change plan tier (keep period boundaries)</option>
+              <option value="change_plan_new_term">Change plan tier (establish new 1-year term)</option>
+              <option value="extend_trial">Extend evaluation trial</option>
+              <option value="schedule_cancellation">Schedule cancellation at period end</option>
+              <option value="revoke_scheduled_cancellation">Revoke scheduled cancellation</option>
+              <option value="cancel_immediately">Cancel immediately</option>
+              <option value="mark_past_due">Mark subscription past due</option>
+              <option value="mark_past_due_with_extension">
+                Mark past due with grace period extension
+              </option>
+            </select>
+          </FormField>
+
+          {!actionType && (
+            <FormField id="sub-status" label="Subscription Status" required>
+              <select
+                id="sub-status"
+                value={subscriptionStatus}
+                onChange={(e) => setSubscriptionStatus(e.target.value)}
+                className={opsInputClass}
+              >
+                <option value="trial">Trial (evaluation period)</option>
+                <option value="active">Active (paid subscription)</option>
+                <option value="past_due">Past due (payment overdue)</option>
+                <option value="cancelled">Cancelled (terminated subscription)</option>
+              </select>
+            </FormField>
+          )}
+
+          <FormField id="sub-account-status" label="Account operational status" required>
+            <select
+              id="sub-account-status"
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className={opsInputClass}
+            >
+              <option value="active">Active (operational access allowed)</option>
+              <option value="suspended">Suspended (access restricted)</option>
+            </select>
+          </FormField>
+
+          {(!actionType ||
+            ['activate', 'renew', 'change_plan', 'change_plan_new_term'].includes(actionType)) && (
+            <FormField id="sub-plan" label="Plan Tier Name">
+              <select
+                id="sub-plan"
+                value={planName}
+                onChange={(e) => setPlanName(e.target.value)}
+                className={opsInputClass}
+              >
+                <option value="">No plan tier set</option>
+                {availablePlans.map((plan) => (
+                  <option key={plan.code} value={plan.code}>
+                    {plan.name} ({plan.code})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+
+          {/* Annual Contract Dates Controls */}
+          {['activate', 'renew', 'change_plan_new_term'].includes(actionType) && (
+            <div className="space-y-3 rounded-md border border-ops-border bg-ops-canvas p-3.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-ops-text-secondary">
+                  Annual contract period (1 calendar year)
+                </span>
+                <Button
+                  variant="secondary"
+                  onClick={handleCalculatePeriodEnd}
+                  title="Auto-calculate exact 1-year period end (leap-year aware)"
+                >
+                  Calculate 1-year end
+                </Button>
+              </div>
+
+              <FormField id="sub-period-start" label="Contractual period start date" required>
+                <input
+                  id="sub-period-start"
+                  type="date"
+                  value={currentPeriodStart}
+                  onChange={(e) => setCurrentPeriodStart(e.target.value)}
+                  className={opsInputClass}
+                />
+              </FormField>
+
+              <FormField
+                id="sub-period-end"
+                label="Contractual period end date (strictly 1 year)"
+                required
+                hint="Must match calendar 1-year date (e.g., leap days Feb 29 → Feb 28)."
+              >
+                <input
+                  id="sub-period-end"
+                  type="date"
+                  value={currentPeriodEnd}
+                  onChange={(e) => setCurrentPeriodEnd(e.target.value)}
+                  className={opsInputClass}
+                />
+              </FormField>
+            </div>
+          )}
+
+          {actionType === 'mark_past_due_with_extension' && (
+            <FormField id="sub-grace-end" label="Extended grace period end date" required>
+              <input
+                id="sub-grace-end"
+                type="date"
+                value={currentPeriodEnd}
+                onChange={(e) => setCurrentPeriodEnd(e.target.value)}
+                className={opsInputClass}
+              />
+            </FormField>
+          )}
+
+          {(!actionType || actionType === 'extend_trial') && (
+            <FormField
+              id="sub-trial-end"
+              label="Trial expiration date"
+              required={actionType === 'extend_trial'}
+              hint={actionType === 'extend_trial' ? undefined : 'Optional.'}
+            >
+              <input
+                id="sub-trial-end"
+                type="date"
+                value={trialEndsAt}
+                onChange={(e) => setTrialEndsAt(e.target.value)}
+                className={opsInputClass}
+              />
+            </FormField>
+          )}
+
+          <FormField
+            id="sub-max-outlets"
+            label="Max allowed outlets"
+            hint="Leave empty for unlimited."
+          >
+            <input
+              id="sub-max-outlets"
+              type="number"
+              min="1"
+              value={maxOutlets}
+              onChange={(e) => setMaxOutlets(e.target.value)}
+              placeholder="e.g. 3 (blank = unlimited)"
+              className={opsInputClass}
+            />
+          </FormField>
+
+          {actionType && (
+            <FormField
+              id="sub-reason"
+              label="Administrative reason"
+              required={['cancel_immediately', 'mark_past_due_with_extension'].includes(actionType)}
+              hint={
+                ['cancel_immediately', 'mark_past_due_with_extension'].includes(actionType)
+                  ? undefined
+                  : 'Optional audit note for this change.'
+              }
+            >
+              <textarea
+                id="sub-reason"
+                rows={2}
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder={
+                  ['cancel_immediately', 'mark_past_due_with_extension'].includes(actionType)
+                    ? 'Mandatory reason for this lifecycle transition…'
+                    : 'Optional audit note for this change…'
+                }
+                className="w-full resize-none rounded-md border border-ops-border bg-white p-2 text-[13px] text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              />
+            </FormField>
+          )}
+        </form>
+      )}
+    </Drawer>
   );
 };

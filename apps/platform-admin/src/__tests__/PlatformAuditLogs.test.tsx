@@ -68,7 +68,8 @@ describe('PlatformAuditLogs Component', () => {
     render(<PlatformAuditLogs token="test-token" businesses={sampleBusinesses} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Platform Audit Log Viewer')).toBeDefined();
+      expect(screen.getByRole('heading', { name: 'Audit logs' })).toBeDefined();
+      expect(screen.getAllByText('platform.business.create').length).toBeGreaterThan(0);
     });
 
     expect(screen.getAllByText('Business Provisioned').length).toBeGreaterThan(0);
@@ -76,7 +77,7 @@ describe('PlatformAuditLogs Component', () => {
     expect(screen.getByText('Kasol Main')).toBeDefined();
     expect(screen.getByText('Super Admin')).toBeDefined();
     expect(screen.getByText('admin@platform.com')).toBeDefined();
-    expect(screen.getAllByText('Admin Granted').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('platform.admin.grant').length).toBeGreaterThan(0);
     expect(screen.getByText('System / Automated')).toBeDefined();
     expect(screen.getByText('System Level')).toBeDefined();
   });
@@ -89,7 +90,7 @@ describe('PlatformAuditLogs Component', () => {
     render(<PlatformAuditLogs token="test-token" businesses={sampleBusinesses} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Platform Audit Log Viewer')).toBeDefined();
+      expect(screen.getByRole('heading', { name: 'Audit logs' })).toBeDefined();
     });
 
     const actionSelect = screen.getByLabelText(/Action Type/i);
@@ -117,7 +118,7 @@ describe('PlatformAuditLogs Component', () => {
     render(<PlatformAuditLogs token="test-token" businesses={sampleBusinesses} />);
 
     await waitFor(() => {
-      expect(screen.getByText('Platform Audit Log Viewer')).toBeDefined();
+      expect(screen.getByRole('button', { name: /Next/i })).toBeDefined();
     });
 
     const nextBtn = screen.getByRole('button', { name: /Next/i });
@@ -135,22 +136,23 @@ describe('PlatformAuditLogs Component', () => {
     });
   });
 
-  it('expands metadata section safely when clicking View Details', async () => {
+  it('opens the audit event detail drawer when clicking View Details', async () => {
     vi.spyOn(apiClient, 'fetchPlatformAuditLogs').mockResolvedValue(sampleAuditResponse);
 
     render(<PlatformAuditLogs token="test-token" businesses={sampleBusinesses} />);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Business Provisioned').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('platform.business.create').length).toBeGreaterThan(0);
     });
 
     const viewDetailsBtns = screen.getAllByRole('button', { name: /View Details/i });
     fireEvent.click(viewDetailsBtns[0]);
 
     await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Audit event detail' })).toBeDefined();
       expect(screen.getByText(/Captured Metadata Payload/i)).toBeDefined();
       expect(screen.getByText(/"plan_name": "starter"/i)).toBeDefined();
-      expect(screen.getByRole('button', { name: /Hide Details/i })).toBeDefined();
+      expect(screen.getByRole('button', { name: /Close inspector panel/i })).toBeDefined();
     });
   });
 
@@ -189,7 +191,7 @@ describe('PlatformAuditLogs Component', () => {
 
     await waitFor(() => {
       expect(fetchSpy).toHaveBeenCalledTimes(2);
-      expect(screen.getByText('Platform Audit Log Viewer')).toBeDefined();
+      expect(screen.getByRole('heading', { name: 'Audit logs' })).toBeDefined();
     });
   });
 });

@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@roms/api-client';
-import { fetchPlatformBusinesses, createPlatformBusiness, assignPlatformOwner } from '@roms/api-client';
+import {
+  fetchPlatformBusinesses,
+  createPlatformBusiness,
+  assignPlatformOwner,
+} from '@roms/api-client';
 import { PlatformBusiness, PlatformBusinessCreatePayload } from '@roms/shared-types';
 import { BusinessDirectory } from './BusinessDirectory';
+import { Button, FormField, opsInputClass } from '../../components/ops-ui';
 
 export const BusinessDirectoryPage: React.FC = () => {
   const { token } = useAuth();
@@ -65,7 +70,10 @@ export const BusinessDirectoryPage: React.FC = () => {
       setProvisionError('Business name must be between 2 and 200 characters.');
       return;
     }
-    if (bizForm.primary_outlet_name.trim().length < 2 || bizForm.primary_outlet_name.trim().length > 200) {
+    if (
+      bizForm.primary_outlet_name.trim().length < 2 ||
+      bizForm.primary_outlet_name.trim().length > 200
+    ) {
       setProvisionError('Primary outlet name must be between 2 and 200 characters.');
       return;
     }
@@ -88,7 +96,12 @@ export const BusinessDirectoryPage: React.FC = () => {
       setIsSubmitting(true);
       setSuccessMessage(null);
       const created = await createPlatformBusiness(
-        { ...bizForm, name: bizForm.name.trim(), public_slug: slug, primary_outlet_name: bizForm.primary_outlet_name.trim() },
+        {
+          ...bizForm,
+          name: bizForm.name.trim(),
+          public_slug: slug,
+          primary_outlet_name: bizForm.primary_outlet_name.trim(),
+        },
         token
       );
 
@@ -97,14 +110,20 @@ export const BusinessDirectoryPage: React.FC = () => {
         const primaryOutlet = created.outlets?.[0];
         if (primaryOutlet) {
           try {
-            await assignPlatformOwner(created.id, {
-              outlet_id: primaryOutlet.id,
-              email: ownerEmail.trim(),
-              password: ownerPassword,
-              display_name: ownerName.trim(),
-            }, token);
+            await assignPlatformOwner(
+              created.id,
+              {
+                outlet_id: primaryOutlet.id,
+                email: ownerEmail.trim(),
+                password: ownerPassword,
+                display_name: ownerName.trim(),
+              },
+              token
+            );
           } catch (ownerErr: any) {
-            ownerWarning = `Business created, but owner assignment failed: ${ownerErr.message || 'unknown error'}. You can assign an owner from the business detail page.`;
+            ownerWarning = `Business created, but owner assignment failed: ${
+              ownerErr.message || 'unknown error'
+            }. You can assign an owner from the business detail page.`;
           }
         } else {
           ownerWarning = 'Business created, but no primary outlet was returned for owner assignment.';
@@ -112,7 +131,14 @@ export const BusinessDirectoryPage: React.FC = () => {
       }
 
       setIsProvisionOpen(false);
-      setBizForm({ name: '', primary_outlet_name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
+      setBizForm({
+        name: '',
+        primary_outlet_name: '',
+        public_slug: '',
+        currency: 'INR',
+        timezone: 'Asia/Kolkata',
+        address: '',
+      });
       setOwnerEmail('');
       setOwnerName('');
       setOwnerPassword('');
@@ -138,128 +164,191 @@ export const BusinessDirectoryPage: React.FC = () => {
         error={error}
         successMessage={successMessage}
         onRetry={loadBusinesses}
-        onOpenProvisionModal={() => { setProvisionError(null); setIsProvisionOpen(true); }}
+        onOpenProvisionModal={() => {
+          setProvisionError(null);
+          setIsProvisionOpen(true);
+        }}
         onViewBusiness={(businessId) => navigate(`/platform/businesses/${businessId}`)}
       />
 
       {isProvisionOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
-          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center pb-4 border-b border-slate-800">
-              <h3 className="text-lg font-bold text-white">Provision New SaaS Business</h3>
-              <button onClick={() => setIsProvisionOpen(false)} className="text-slate-400 hover:text-white p-1">✕</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-[rgba(31,41,51,0.40)]" aria-hidden="true" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provision-business-title"
+            className="relative flex max-h-[90vh] w-full max-w-lg flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
+          >
+            <div className="flex items-center justify-between border-b border-ops-border p-5">
+              <h2
+                id="provision-business-title"
+                className="text-base font-semibold text-ops-text-primary"
+              >
+                Add business
+              </h2>
+              <button
+                type="button"
+                onClick={() => setIsProvisionOpen(false)}
+                className="rounded p-1 text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                aria-label="Close"
+                disabled={isSubmitting}
+              >
+                ✕
+              </button>
             </div>
 
-            <form onSubmit={handleCreateBusinessSubmit} className="mt-4 space-y-4">
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Business / Company Name *</label>
+            <form onSubmit={handleCreateBusinessSubmit} className="flex-1 space-y-4 overflow-y-auto p-5">
+              <FormField id="biz-name" label="Business name" required>
                 <input
+                  id="biz-name"
                   type="text"
                   required
                   value={bizForm.name}
                   onChange={(e) => setBizForm({ ...bizForm, name: e.target.value })}
                   placeholder="e.g. Himalayan Hospitality Pvt Ltd"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
+              </FormField>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Primary Outlet Name *</label>
+              <FormField id="biz-outlet-name" label="Primary outlet name" required>
                 <input
+                  id="biz-outlet-name"
                   type="text"
                   required
                   value={bizForm.primary_outlet_name}
-                  onChange={(e) => setBizForm({ ...bizForm, primary_outlet_name: e.target.value })}
+                  onChange={(e) =>
+                    setBizForm({ ...bizForm, primary_outlet_name: e.target.value })
+                  }
                   placeholder="e.g. Riverside Camp Restaurant"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
+              </FormField>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Public Slug (QR Menu Identifier) *</label>
+              <FormField
+                id="biz-slug"
+                label="Public slug"
+                required
+                hint="Lowercase letters, numbers, and hyphens only."
+              >
                 <input
+                  id="biz-slug"
                   type="text"
                   required
                   value={bizForm.public_slug}
-                  onChange={(e) => setBizForm({ ...bizForm, public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
+                  onChange={(e) =>
+                    setBizForm({
+                      ...bizForm,
+                      public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-'),
+                    })
+                  }
                   placeholder="e.g. riverside-camp"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
+              </FormField>
 
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">Currency</label>
+                <FormField id="biz-currency" label="Currency">
                   <input
+                    id="biz-currency"
                     type="text"
                     value={bizForm.currency || ''}
-                    onChange={(e) => setBizForm({ ...bizForm, currency: e.target.value.toUpperCase() })}
+                    onChange={(e) =>
+                      setBizForm({ ...bizForm, currency: e.target.value.toUpperCase() })
+                    }
                     maxLength={3}
                     placeholder="INR"
-                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={`${opsInputClass} uppercase`}
                   />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">Timezone</label>
+                </FormField>
+                <FormField id="biz-timezone" label="Timezone">
                   <input
+                    id="biz-timezone"
                     type="text"
                     value={bizForm.timezone || ''}
                     onChange={(e) => setBizForm({ ...bizForm, timezone: e.target.value })}
                     placeholder="Asia/Kolkata"
-                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className={opsInputClass}
                   />
-                </div>
+                </FormField>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Address (Optional)</label>
+              <FormField id="biz-address" label="Address" hint="Optional">
                 <input
+                  id="biz-address"
                   type="text"
                   value={bizForm.address || ''}
                   onChange={(e) => setBizForm({ ...bizForm, address: e.target.value })}
                   placeholder="Kasol Highway, HP"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={opsInputClass}
                 />
-              </div>
+              </FormField>
 
-              <div className="pt-3 border-t border-slate-800">
-                <div className="text-xs font-semibold uppercase text-slate-400 mb-2">Owner Assignment (Optional)</div>
+              <div className="border-t border-ops-divider pt-4">
+                <div className="mb-3 text-xs font-semibold text-ops-text-secondary">
+                  Owner assignment (optional)
+                </div>
                 <div className="space-y-3">
-                  <input
-                    type="email"
-                    value={ownerEmail}
-                    onChange={(e) => setOwnerEmail(e.target.value)}
-                    placeholder="owner@restaurant.com"
-                    className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  />
+                  <FormField id="owner-email" label="Owner email">
+                    <input
+                      id="owner-email"
+                      type="email"
+                      value={ownerEmail}
+                      onChange={(e) => setOwnerEmail(e.target.value)}
+                      placeholder="owner@restaurant.com"
+                      className={opsInputClass}
+                    />
+                  </FormField>
                   {ownerEmail.trim() && (
                     <>
-                      <input
-                        type="text"
-                        value={ownerName}
-                        onChange={(e) => setOwnerName(e.target.value)}
-                        placeholder="Owner display name"
-                        className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
-                      <input
-                        type="password"
-                        value={ownerPassword}
-                        onChange={(e) => setOwnerPassword(e.target.value)}
-                        placeholder="Initial password (min 8 characters)"
-                        className="w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                      />
+                      <FormField id="owner-name" label="Owner display name" required>
+                        <input
+                          id="owner-name"
+                          type="text"
+                          value={ownerName}
+                          onChange={(e) => setOwnerName(e.target.value)}
+                          placeholder="Owner display name"
+                          className={opsInputClass}
+                        />
+                      </FormField>
+                      <FormField
+                        id="owner-password"
+                        label="Initial password"
+                        required
+                        hint="Minimum 8 characters."
+                      >
+                        <input
+                          id="owner-password"
+                          type="password"
+                          value={ownerPassword}
+                          onChange={(e) => setOwnerPassword(e.target.value)}
+                          placeholder="Initial password"
+                          className={opsInputClass}
+                        />
+                      </FormField>
                     </>
                   )}
                 </div>
               </div>
 
-              {provisionError && <p className="text-xs text-red-400">{provisionError}</p>}
+              {provisionError && (
+                <p role="alert" className="text-xs text-ops-error">
+                  {provisionError}
+                </p>
+              )}
 
-              <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
-                <button type="button" onClick={() => setIsProvisionOpen(false)} className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 text-xs font-semibold">Cancel</button>
-                <button type="submit" disabled={isSubmitting} className="px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50">
-                  {isSubmitting ? 'Provisioning...' : 'Provision Business'}
-                </button>
+              <div className="flex justify-end gap-2 border-t border-ops-border pt-4">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setIsProvisionOpen(false)}
+                  disabled={isSubmitting}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" variant="primary" disabled={isSubmitting}>
+                  {isSubmitting ? 'Adding…' : 'Add business'}
+                </Button>
               </div>
             </form>
           </div>

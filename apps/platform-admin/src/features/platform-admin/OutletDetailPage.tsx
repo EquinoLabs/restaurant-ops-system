@@ -7,6 +7,18 @@ import {
   PlatformOutletProfileUpdatePayload,
   PlatformBusinessEntitlementsResponse,
 } from '@roms/shared-types';
+import { ArrowLeft, Copy, Info, Loader2 } from 'lucide-react';
+import {
+  Button,
+  DataTable,
+  StateBlock,
+  StatusBadge,
+  Tabs,
+  FormField,
+  opsInputClass,
+  type DataTableColumn,
+} from '../../components/ops-ui';
+import { accountLabel, accountTone, formatCreatedAt, subscriptionLabel, subscriptionTone } from './BusinessDirectory';
 
 type OutletTab = 'profile' | 'subscription';
 
@@ -21,6 +33,10 @@ function isValidTimezone(tz: string): boolean {
   }
 }
 
+function isValidHex(value: string | null | undefined): value is string {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value);
+}
+
 export const OutletDetailPage: React.FC = () => {
   const { outletId } = useParams<{ outletId: string }>();
   const { token, user } = useAuth();
@@ -33,9 +49,11 @@ export const OutletDetailPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<OutletTab>('profile');
 
   const [form, setForm] = useState<PlatformOutletProfileUpdatePayload>({});
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const [entitlements, setEntitlements] = useState<PlatformBusinessEntitlementsResponse | null>(null);
   const [entitlementsLoading, setEntitlementsLoading] = useState(false);
@@ -59,6 +77,9 @@ export const OutletDetailPage: React.FC = () => {
         primary_color: data.primary_color ?? '',
         accent_color: data.accent_color ?? '',
       });
+      setDirty(false);
+      setSaveSuccess(false);
+      setSaveError(null);
     } catch (err: any) {
       if (err.status === 404) {
         setNotFound(true);
@@ -102,8 +123,16 @@ export const OutletDetailPage: React.FC = () => {
     return Math.max(0, Math.ceil((end - Date.now()) / (24 * 60 * 60 * 1000)));
   }, [entitlements?.subscription.trial_ends_at]);
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const updateField = <K extends keyof PlatformOutletProfileUpdatePayload>(
+    key: K,
+    value: PlatformOutletProfileUpdatePayload[K]
+  ) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setDirty(true);
+    setSaveSuccess(false);
+  };
+
+  const submitProfile = async () => {
     if (!token || !outletId) return;
 
     const name = form.name?.trim();
@@ -143,6 +172,7 @@ export const OutletDetailPage: React.FC = () => {
       const updated = await updatePlatformOutletProfile(outletId, payload, token);
       setOutlet(updated);
       setSaveSuccess(true);
+      setDirty(false);
     } catch (err: any) {
       setSaveError(err.message || 'Failed to update outlet profile.');
     } finally {
@@ -150,47 +180,68 @@ export const OutletDetailPage: React.FC = () => {
     }
   };
 
+  const handleSaveProfile = (e: React.FormEvent) => {
+    e.preventDefault();
+    void submitProfile();
+  };
+
+  const discardChanges = () => {
+    if (!outlet) return;
+    setForm({
+      name: outlet.name,
+      address: outlet.address ?? '',
+      timezone: outlet.timezone,
+      currency: outlet.currency,
+      primary_color: outlet.primary_color ?? '',
+      accent_color: outlet.accent_color ?? '',
+    });
+    setDirty(false);
+    setSaveError(null);
+    setSaveSuccess(false);
+  };
+
+  const handleCopyLink = async () => {
+    if (!outlet || !navigator.clipboard) return;
+    try {
+      await navigator.clipboard.writeText(`/m/${outlet.public_slug}`);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard access denied; leave the label unchanged.
+    }
+  };
+
   if (loading) {
-    return (
-      <div className="py-20 text-center text-slate-400">
-        <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-4"></div>
-        <p className="text-sm font-medium">Loading outlet details...</p>
-      </div>
-    );
+    return <StateBlock variant="loading" title="Loading outlet details..." />;
   }
 
   if (notFound) {
     return (
-      <div className="p-12 text-center text-slate-400 bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3">
-        <p className="text-base font-bold text-white">Outlet not found</p>
-        <p className="text-xs">The requested outlet does not exist or was removed.</p>
-        <Link
-          to="/platform/businesses"
-          className="inline-block mt-2 px-4 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all"
-        >
-          Back to Business Directory
-        </Link>
-      </div>
+      <StateBlock
+        variant="not-found"
+        title="Outlet not found"
+        description="The requested outlet does not exist or was removed."
+        secondaryAction={
+          <Link
+            to="/platform/businesses"
+            className="inline-flex h-8 items-center rounded-md border border-ops-border bg-white px-3 text-[13px] font-medium text-ops-text-primary hover:bg-ops-canvas"
+          >
+            Back to Business Directory
+          </Link>
+        }
+      />
     );
   }
 
   if (error || !outlet) {
     return (
-      <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400">
-        <div className="flex items-center space-x-3 mb-3">
-          <svg className="w-6 h-6 text-red-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <h3 className="text-base font-bold">Failed to load outlet details</h3>
-        </div>
-        <p className="text-xs text-red-300 mb-4">{error}</p>
-        <button
-          onClick={loadOutlet}
-          className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-xs font-bold transition-colors"
-        >
-          Retry Loading
-        </button>
-      </div>
+      <StateBlock
+        variant="error"
+        title="Failed to load outlet details"
+        description={error || undefined}
+        actionLabel="Retry Loading"
+        onAction={loadOutlet}
+      />
     );
   }
 
@@ -199,324 +250,446 @@ export const OutletDetailPage: React.FC = () => {
     { id: 'subscription', label: 'Subscription & Entitlements' },
   ];
 
-  return (
-    <div className="space-y-6">
-      <nav className="flex items-center space-x-2 text-xs text-slate-500" aria-label="Breadcrumb">
-        <Link to="/platform/businesses" className="hover:text-indigo-300">Businesses</Link>
-        <span>/</span>
-        {outlet.business_id && (
-          <>
-            <Link to={`/platform/businesses/${outlet.business_id}`} className="hover:text-indigo-300">
-              {outlet.business_name || outlet.business_id}
-            </Link>
-            <span>/</span>
-          </>
-        )}
-        <span className="text-white font-semibold">{outlet.name}</span>
-      </nav>
+  const featureColumns: DataTableColumn<PlatformBusinessEntitlementsResponse['features'][number]>[] = [
+    {
+      key: 'feature',
+      header: 'Feature',
+      width: '34%',
+      render: (f) => (
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate font-medium text-ops-text-primary">{f.feature_name}</span>
+          <span className="mt-0.5 truncate font-mono text-[11px] text-ops-text-secondary">
+            {f.feature_code}
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'authorized',
+      header: 'Authorized',
+      width: '16%',
+      render: (f) => (
+        <StatusBadge
+          tone={f.authorized ? 'active' : 'critical'}
+          label={f.authorized ? 'Granted' : 'Denied'}
+        />
+      ),
+    },
+    {
+      key: 'limit',
+      header: 'Limit',
+      width: '16%',
+      render: (f) => (
+        <span className="tabular-nums text-ops-text-primary">
+          {f.limit_type === 'unlimited' ? 'Unlimited' : f.limit_type === 'numeric' ? String(f.limit_value) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'source',
+      header: 'Source',
+      width: '17%',
+      render: (f) => <span className="capitalize text-ops-text-secondary">{f.source}</span>,
+    },
+    {
+      key: 'scope',
+      header: 'Scope',
+      width: '17%',
+      render: (f) => <span className="capitalize text-ops-text-secondary">{f.scope}</span>,
+    },
+  ];
 
-      <div className="pb-4 border-b border-slate-800">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-extrabold text-white tracking-tight">{outlet.name}</h1>
-              <span className="font-mono text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                /m/{outlet.public_slug}
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                  outlet.status === 'suspended'
-                    ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
-                    : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                }`}
-              >
-                {outlet.status}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-1 font-mono">{outlet.id}</p>
+  return (
+    <div className="space-y-4">
+      <Link
+        to={outlet.business_id ? `/platform/businesses/${outlet.business_id}` : '/platform/businesses'}
+        className="inline-flex items-center gap-1.5 text-[13px] font-medium text-ops-accent hover:underline"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        {outlet.business_id
+          ? `Back to ${outlet.business_name || outlet.business_id}`
+          : 'Back to Businesses'}
+      </Link>
+
+      <div className="rounded-md border border-ops-border bg-white p-5">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="text-xl font-semibold leading-7 tracking-tight text-ops-text-primary">
+              {outlet.name}
+            </h1>
+            <StatusBadge tone={accountTone(outlet.status)} label={accountLabel(outlet.status)} />
           </div>
-          <a
-            href={`/m/${outlet.public_slug}`}
-            target="_blank"
-            rel="noreferrer"
-            className="px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-xs font-semibold transition-colors self-start sm:self-auto"
-          >
-            Open Public Menu ↗
-          </a>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-ops-text-secondary">
+            {outlet.business_id && (
+              <>
+                <span>
+                  Parent business:{' '}
+                  <Link
+                    to={`/platform/businesses/${outlet.business_id}`}
+                    className="font-medium text-ops-accent hover:underline"
+                  >
+                    {outlet.business_name || outlet.business_id}
+                  </Link>
+                </span>
+                <span className="text-ops-text-disabled" aria-hidden="true">
+                  •
+                </span>
+              </>
+            )}
+            <span className="flex items-center gap-1.5">
+              <span>Public link:</span>
+              <a
+                href={`/m/${outlet.public_slug}`}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-ops-text-primary hover:text-ops-accent"
+              >
+                {`/m/${outlet.public_slug}`}
+              </a>
+              <button
+                type="button"
+                onClick={handleCopyLink}
+                aria-label="Copy public link"
+                className="inline-flex h-5 items-center gap-1 rounded bg-ops-canvas px-1.5 text-[11px] font-medium text-ops-text-secondary transition-colors hover:bg-ops-border hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              >
+                <Copy className="h-3 w-3" aria-hidden="true" />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+            </span>
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <Tabs
+            tabs={tabs}
+            activeId={activeTab}
+            onChange={(id) => setActiveTab(id as OutletTab)}
+          />
         </div>
       </div>
 
-      <div className="border-b border-slate-800 flex space-x-1">
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2.5 text-xs font-bold border-b-2 -mb-px transition-colors ${
-              activeTab === tab.id
-                ? 'border-indigo-500 text-indigo-300'
-                : 'border-transparent text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
       {activeTab === 'profile' && (
-        <form onSubmit={handleSaveProfile} className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4 max-w-2xl">
-          <h2 className="text-sm font-bold text-white">Outlet Profile & Configuration</h2>
+        <div className="grid gap-4 lg:grid-cols-12">
+          <form
+            id="outlet-profile-form"
+            onSubmit={handleSaveProfile}
+            className="space-y-5 rounded-md border border-ops-border bg-white p-5 lg:col-span-8"
+          >
+            <div className="border-b border-ops-divider pb-3">
+              <h2 className="text-sm font-semibold text-ops-text-primary">Outlet profile</h2>
+              <p className="mt-0.5 text-xs text-ops-text-secondary">
+                Operational identity, localization standards, and digital branding assets for this
+                specific unit.
+              </p>
+            </div>
 
-          <div>
-            <label className="block text-xs font-semibold uppercase text-slate-300">Outlet Name *</label>
-            <input
-              type="text"
-              value={form.name || ''}
-              onChange={(e) => { setForm({ ...form, name: e.target.value }); setSaveSuccess(false); }}
-              disabled={isOperator}
-              className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold uppercase text-slate-300">Public Slug</label>
-            <input
-              type="text"
-              value={outlet.public_slug}
-              disabled
-              className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800/50 border border-slate-800 text-amber-400 font-mono text-sm cursor-not-allowed"
-            />
-            <p className="mt-1 text-[10px] text-slate-500">Slug is immutable after creation.</p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold uppercase text-slate-300">Address</label>
-            <input
-              type="text"
-              value={form.address || ''}
-              onChange={(e) => { setForm({ ...form, address: e.target.value }); setSaveSuccess(false); }}
-              disabled={isOperator}
-              placeholder="Street, city, region"
-              className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
-            />
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300">Timezone *</label>
+            <FormField id="outlet-profile-name" label="Outlet Name" required>
               <input
                 type="text"
-                value={form.timezone || ''}
-                onChange={(e) => { setForm({ ...form, timezone: e.target.value }); setSaveSuccess(false); }}
+                value={form.name || ''}
+                onChange={(e) => updateField('name', e.target.value)}
                 disabled={isOperator}
-                placeholder="Asia/Kolkata"
-                list="platform-iana-timezones"
-                className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                className={opsInputClass}
               />
-              <datalist id="platform-iana-timezones">
-                {VALID_CURRENCIES.length > 0 && (
-                  <>
-                    <option value="Asia/Kolkata" />
-                    <option value="Asia/Dubai" />
-                    <option value="Europe/London" />
-                    <option value="America/New_York" />
-                    <option value="America/Los_Angeles" />
-                    <option value="Australia/Sydney" />
-                    <option value="Asia/Singapore" />
-                    <option value="Asia/Tokyo" />
-                  </>
-                )}
-              </datalist>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300">Currency *</label>
+            </FormField>
+
+            <FormField id="outlet-profile-slug" label="Public Slug" hint="Slug is immutable after creation.">
               <input
                 type="text"
-                value={form.currency || ''}
-                onChange={(e) => { setForm({ ...form, currency: e.target.value.toUpperCase() }); setSaveSuccess(false); }}
-                disabled={isOperator}
-                maxLength={3}
-                placeholder="INR"
-                list="platform-iso-currencies"
-                className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                value={outlet.public_slug}
+                disabled
+                className={`${opsInputClass} font-mono`}
               />
-              <datalist id="platform-iso-currencies">
-                {VALID_CURRENCIES.map((c) => <option key={c} value={c} />)}
-              </datalist>
-            </div>
-          </div>
+            </FormField>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300">Primary Color</label>
-              <div className="mt-1 flex items-center space-x-2">
-                <input
-                  type="color"
-                  value={form.primary_color && /^#[0-9a-fA-F]{6}$/.test(form.primary_color) ? form.primary_color : '#6366f1'}
-                  onChange={(e) => { setForm({ ...form, primary_color: e.target.value }); setSaveSuccess(false); }}
-                  disabled={isOperator}
-                  className="w-10 h-10 rounded-lg border border-slate-700 bg-slate-800 cursor-pointer disabled:cursor-not-allowed"
-                />
+            <FormField id="outlet-profile-address" label="Physical Address">
+              <textarea
+                rows={2}
+                value={form.address || ''}
+                onChange={(e) => updateField('address', e.target.value)}
+                disabled={isOperator}
+                placeholder="Street, city, region"
+                className="min-h-[64px] w-full resize-none rounded-md border border-ops-border bg-white px-2.5 py-1.5 text-[13px] leading-5 text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus disabled:opacity-50"
+              />
+            </FormField>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <FormField id="outlet-profile-timezone" label="Operating Timezone" required>
                 <input
                   type="text"
-                  value={form.primary_color || ''}
-                  onChange={(e) => { setForm({ ...form, primary_color: e.target.value }); setSaveSuccess(false); }}
+                  value={form.timezone || ''}
+                  onChange={(e) => updateField('timezone', e.target.value)}
                   disabled={isOperator}
-                  placeholder="#6366f1"
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                  placeholder="Asia/Kolkata"
+                  list="platform-iana-timezones"
+                  className={opsInputClass}
                 />
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold uppercase text-slate-300">Accent Color</label>
-              <div className="mt-1 flex items-center space-x-2">
-                <input
-                  type="color"
-                  value={form.accent_color && /^#[0-9a-fA-F]{6}$/.test(form.accent_color) ? form.accent_color : '#10b981'}
-                  onChange={(e) => { setForm({ ...form, accent_color: e.target.value }); setSaveSuccess(false); }}
-                  disabled={isOperator}
-                  className="w-10 h-10 rounded-lg border border-slate-700 bg-slate-800 cursor-pointer disabled:cursor-not-allowed"
-                />
+              </FormField>
+              <FormField id="outlet-profile-currency" label="Base Currency" required>
                 <input
                   type="text"
-                  value={form.accent_color || ''}
-                  onChange={(e) => { setForm({ ...form, accent_color: e.target.value }); setSaveSuccess(false); }}
+                  value={form.currency || ''}
+                  onChange={(e) => updateField('currency', e.target.value.toUpperCase())}
                   disabled={isOperator}
-                  placeholder="#10b981"
-                  className="flex-1 px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                  maxLength={3}
+                  placeholder="INR"
+                  list="platform-iso-currencies"
+                  className={`${opsInputClass} uppercase`}
                 />
+              </FormField>
+            </div>
+
+            <datalist id="platform-iana-timezones">
+              <option value="Asia/Kolkata" />
+              <option value="Asia/Dubai" />
+              <option value="Europe/London" />
+              <option value="America/New_York" />
+              <option value="America/Los_Angeles" />
+              <option value="Australia/Sydney" />
+              <option value="Asia/Singapore" />
+              <option value="Asia/Tokyo" />
+            </datalist>
+            <datalist id="platform-iso-currencies">
+              {VALID_CURRENCIES.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+
+            <div className="border-t border-ops-divider pt-4">
+              <span className="mb-3 block text-xs font-semibold uppercase tracking-wide text-ops-text-secondary">
+                Branding Configuration
+              </span>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="flex flex-col gap-1.5">
+                  <label
+                    htmlFor="outlet-profile-primary-color"
+                    className="text-xs font-semibold text-ops-text-secondary"
+                  >
+                    Primary Color
+                  </label>
+                  <div className="flex h-8 items-center gap-2 rounded-md border border-ops-border bg-white pl-2 pr-1">
+                    <span
+                      aria-hidden="true"
+                      className="h-4 w-4 shrink-0 rounded-full border border-ops-border"
+                      style={{ backgroundColor: isValidHex(form.primary_color) ? form.primary_color : '#CBD2D9' }}
+                    />
+                    <input
+                      id="outlet-profile-primary-color"
+                      type="text"
+                      value={form.primary_color || ''}
+                      onChange={(e) => updateField('primary_color', e.target.value)}
+                      disabled={isOperator}
+                      placeholder="#2554C7"
+                      maxLength={7}
+                      className="h-6 w-full bg-transparent font-mono text-[13px] uppercase text-ops-text-primary placeholder:text-ops-text-disabled focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+                  <p className="text-[11px] leading-4 text-ops-text-secondary">
+                    Header chrome and checkout buttons
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <label
+                    htmlFor="outlet-profile-accent-color"
+                    className="text-xs font-semibold text-ops-text-secondary"
+                  >
+                    Accent Color
+                  </label>
+                  <div className="flex h-8 items-center gap-2 rounded-md border border-ops-border bg-white pl-2 pr-1">
+                    <span
+                      aria-hidden="true"
+                      className="h-4 w-4 shrink-0 rounded-full border border-ops-border"
+                      style={{ backgroundColor: isValidHex(form.accent_color) ? form.accent_color : '#CBD2D9' }}
+                    />
+                    <input
+                      id="outlet-profile-accent-color"
+                      type="text"
+                      value={form.accent_color || ''}
+                      onChange={(e) => updateField('accent_color', e.target.value)}
+                      disabled={isOperator}
+                      placeholder="#1B7F4B"
+                      maxLength={7}
+                      className="h-6 w-full bg-transparent font-mono text-[13px] uppercase text-ops-text-primary placeholder:text-ops-text-disabled focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+                  <p className="text-[11px] leading-4 text-ops-text-secondary">
+                    Badges, specials, and highlight accents
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
 
-          {saveError && <p className="text-xs text-red-400">{saveError}</p>}
-          {saveSuccess && <p className="text-xs text-emerald-400 font-semibold">Profile updated successfully.</p>}
+            {saveError && (
+              <p role="alert" className="text-xs text-ops-error">
+                {saveError}
+              </p>
+            )}
+            {saveSuccess && (
+              <p role="status" className="text-xs font-medium text-ops-status-active-text">
+                Profile updated successfully.
+              </p>
+            )}
+          </form>
 
-          {!isOperator && (
-            <div className="pt-4 border-t border-slate-800 flex justify-end">
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold disabled:opacity-50"
-              >
-                {saving ? 'Saving...' : 'Save Profile'}
-              </button>
-            </div>
-          )}
-        </form>
+          <aside className="lg:col-span-4">
+            <section className="rounded-md border border-ops-border bg-white p-4">
+              <div className="mb-3 flex items-center justify-between border-b border-ops-divider pb-3">
+                <h3 className="text-sm font-semibold text-ops-text-primary">Outlet summary</h3>
+                <Info className="h-4 w-4 text-ops-text-secondary" aria-hidden="true" />
+              </div>
+              <dl className="flex flex-col text-[13px]">
+                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
+                  <dt className="text-xs text-ops-text-secondary">Status</dt>
+                  <dd>
+                    <StatusBadge tone={accountTone(outlet.status)} label={accountLabel(outlet.status)} />
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
+                  <dt className="text-xs text-ops-text-secondary">Parent business</dt>
+                  <dd className="min-w-0 truncate text-right">
+                    {outlet.business_id ? (
+                      <Link
+                        to={`/platform/businesses/${outlet.business_id}`}
+                        className="font-medium text-ops-accent hover:underline"
+                      >
+                        {outlet.business_name || outlet.business_id}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
+                  <dt className="text-xs text-ops-text-secondary">Public URL</dt>
+                  <dd className="min-w-0 truncate text-right">
+                    <a
+                      href={`/m/${outlet.public_slug}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-medium text-ops-text-primary hover:text-ops-accent"
+                    >
+                      {`/m/${outlet.public_slug}`}
+                    </a>
+                  </dd>
+                </div>
+                <div className="flex items-center justify-between gap-2 py-2.5">
+                  <dt className="text-xs text-ops-text-secondary">Created date</dt>
+                  <dd className="text-ops-text-primary">{formatCreatedAt(outlet.created_at)}</dd>
+                </div>
+              </dl>
+            </section>
+          </aside>
+        </div>
       )}
 
       {activeTab === 'subscription' && (
         <div className="space-y-4">
-          <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
-            Subscription and entitlements are inspected per outlet (canonical scope). Plan changes, trial extensions, and lifecycle actions
-            require an outlet-level subscription write API which is not yet available; the legacy business-level subscription endpoint is
+          <div className="rounded-md border border-ops-status-pending-bg bg-ops-status-pending-bg/50 px-4 py-3 text-[13px] leading-5 text-ops-status-pending-text">
+            Subscription and entitlements are inspected per outlet (canonical scope). Plan changes,
+            trial extensions, and lifecycle actions require an outlet-level subscription write API
+            which is not yet available; the legacy business-level subscription endpoint is
             intentionally not exposed here.
           </div>
 
           {entitlementsLoading && (
-            <div className="py-12 text-center text-slate-400">
-              <div className="w-8 h-8 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin mx-auto mb-3"></div>
-              <p className="text-xs font-medium">Loading subscription entitlements...</p>
+            <div
+              role="status"
+              className="flex items-center justify-center gap-2 rounded-md border border-ops-border bg-white p-8 text-[13px] text-ops-text-secondary"
+            >
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              Loading subscription entitlements...
             </div>
           )}
 
-          {entitlementsError && (
-            <div className="p-6 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400">
-              <p className="text-xs font-bold mb-2">Failed to load entitlements</p>
-              <p className="text-xs text-red-300 mb-3">{entitlementsError}</p>
-              <button
-                onClick={loadEntitlements}
-                className="px-4 py-2 rounded-xl bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-200 text-xs font-bold"
-              >
+          {entitlementsError && !entitlementsLoading && (
+            <div
+              role="alert"
+              className="rounded-md border border-ops-status-critical-bg bg-ops-status-critical-bg/40 p-4"
+            >
+              <p className="text-[13px] font-semibold text-ops-error">Failed to load entitlements</p>
+              <p className="mt-1 text-xs text-ops-error">{entitlementsError}</p>
+              <Button variant="secondary" className="mt-3" onClick={loadEntitlements}>
                 Retry
-              </button>
+              </Button>
             </div>
           )}
 
           {!entitlementsLoading && !entitlementsError && entitlements && (
             <>
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-6">
-                <h2 className="text-sm font-bold text-white mb-4">Current Subscription</h2>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
+              <section className="rounded-md border border-ops-border bg-white p-5">
+                <div className="mb-4 border-b border-ops-divider pb-3">
+                  <h2 className="text-sm font-semibold text-ops-text-primary">Current Subscription</h2>
+                  <p className="mt-0.5 text-xs text-ops-text-secondary">
+                    Resolved plan state for this outlet's parent business.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-4 text-[13px] sm:grid-cols-3">
                   <div>
-                    <div className="text-slate-500 uppercase font-semibold">Plan</div>
-                    <div className="text-white font-bold mt-0.5">{entitlements.subscription.plan_name}</div>
-                    <div className="text-slate-400 font-mono">{entitlements.subscription.plan_code}</div>
-                  </div>
-                  <div>
-                    <div className="text-slate-500 uppercase font-semibold">Status</div>
-                    <div className="mt-0.5">
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                        entitlements.subscription.resolved_status === 'active'
-                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                          : entitlements.subscription.resolved_status === 'cancelled'
-                          ? 'bg-red-500/20 text-red-400 border-red-500/30'
-                          : entitlements.subscription.resolved_status === 'past_due'
-                          ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
-                          : 'bg-sky-500/20 text-sky-400 border-sky-500/30'
-                      }`}>
-                        {entitlements.subscription.resolved_status}
-                      </span>
+                    <div className="text-xs font-semibold text-ops-text-secondary">Plan</div>
+                    <div className="mt-1 font-medium text-ops-text-primary">
+                      {entitlements.subscription.plan_name}
+                    </div>
+                    <div className="mt-0.5 font-mono text-xs text-ops-text-secondary">
+                      {entitlements.subscription.plan_code}
                     </div>
                   </div>
                   <div>
-                    <div className="text-slate-500 uppercase font-semibold">Trial Ends</div>
-                    <div className="text-white font-semibold mt-0.5">
+                    <div className="text-xs font-semibold text-ops-text-secondary">Status</div>
+                    <div className="mt-1">
+                      <StatusBadge
+                        tone={subscriptionTone(entitlements.subscription.resolved_status)}
+                        label={subscriptionLabel(entitlements.subscription.resolved_status)}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-ops-text-secondary">Trial Ends</div>
+                    <div className="mt-1 font-medium text-ops-text-primary">
                       {entitlements.subscription.trial_ends_at
                         ? new Date(entitlements.subscription.trial_ends_at).toLocaleDateString()
                         : '—'}
                     </div>
                     {trialDaysRemaining !== null && (
-                      <div className="text-slate-400">{trialDaysRemaining} day(s) remaining</div>
+                      <div className="mt-0.5 text-xs text-ops-text-secondary">
+                        {trialDaysRemaining} day(s) remaining
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
+              </section>
 
-              <div className="bg-slate-900/60 border border-slate-800 rounded-2xl overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-800">
-                  <h2 className="text-sm font-bold text-white">Feature Entitlements</h2>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="border-b border-slate-800 text-[10px] uppercase text-slate-500">
-                        <th className="px-6 py-3 font-bold">Feature</th>
-                        <th className="px-6 py-3 font-bold">Authorized</th>
-                        <th className="px-6 py-3 font-bold">Limit</th>
-                        <th className="px-6 py-3 font-bold">Source</th>
-                        <th className="px-6 py-3 font-bold">Scope</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {entitlements.features.map((f) => (
-                        <tr key={f.feature_code} className="border-b border-slate-800/60 last:border-b-0">
-                          <td className="px-6 py-3">
-                            <div className="text-white font-semibold">{f.feature_name}</div>
-                            <div className="text-slate-500 font-mono text-[10px]">{f.feature_code}</div>
-                          </td>
-                          <td className="px-6 py-3">
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
-                              f.authorized
-                                ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                                : 'bg-red-500/20 text-red-400 border-red-500/30'
-                            }`}>
-                              {f.authorized ? 'Granted' : 'Denied'}
-                            </span>
-                          </td>
-                          <td className="px-6 py-3 text-slate-300">
-                            {f.limit_type === 'unlimited' ? 'Unlimited' : f.limit_type === 'numeric' ? String(f.limit_value) : '—'}
-                          </td>
-                          <td className="px-6 py-3 text-slate-400 capitalize">{f.source}</td>
-                          <td className="px-6 py-3 text-slate-400 capitalize">{f.scope}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <DataTable
+                columns={featureColumns}
+                rows={entitlements.features}
+                rowKey={(f) => f.feature_code}
+                minWidth="760px"
+                footer={
+                  <span>
+                    Showing {entitlements.features.length} feature entitlements
+                  </span>
+                }
+              />
             </>
           )}
+        </div>
+      )}
+
+      {!isOperator && dirty && (
+        <div className="fixed bottom-4 left-4 right-4 z-40 lg:left-64">
+          <div className="mx-auto flex max-w-[1160px] items-center justify-between gap-4 rounded-md border border-ops-border bg-white px-4 py-2.5 shadow-ops-l2">
+            <div className="flex items-center gap-2 text-[13px] font-medium text-ops-text-primary">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-ops-accent" aria-hidden="true" />
+              You have unsaved changes
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="secondary" onClick={discardChanges} disabled={saving}>
+                Discard
+              </Button>
+              <Button variant="primary" onClick={() => void submitProfile()} disabled={saving}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -114,7 +114,7 @@ describe('SubscriptionsOverview Component', () => {
       />
     );
 
-    expect(screen.getByText('Subscription & Billing Tiers')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Subscriptions' })).toBeDefined();
     expect(screen.getByText('Pine Tree Cafe')).toBeDefined();
     expect(screen.getByText('starter')).toBeDefined();
     expect(screen.getAllByText('Trial').length).toBeGreaterThan(0);
@@ -149,6 +149,28 @@ describe('SubscriptionsOverview Component', () => {
     const retryBtn = screen.getByRole('button', { name: /Retry Loading/i });
     fireEvent.click(retryBtn);
     expect(handleRetry).toHaveBeenCalled();
+  });
+
+  it('renders metric cards and opens the edit drawer from the Edit action', () => {
+    render(
+      <SubscriptionsOverview
+        businesses={sampleBusinesses}
+        loading={false}
+        error={null}
+        token="test-token"
+      />
+    );
+
+    expect(screen.getByText('Active subscriptions')).toBeDefined();
+    expect(screen.getAllByText('Past due').length).toBeGreaterThan(0);
+    expect(screen.getByText('0 / 0')).toBeDefined();
+
+    const editButtons = screen.getAllByRole('button', { name: 'Edit' });
+    expect(editButtons.length).toBeGreaterThan(0);
+    fireEvent.click(editButtons[0]);
+
+    expect(screen.getByRole('dialog')).toBeDefined();
+    expect(screen.getByText('Manage Subscription & Status')).toBeDefined();
   });
 });
 

@@ -1,10 +1,12 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@roms/api-client';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export const PlatformLoginForm: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { login, logout } = useAuth();
@@ -41,100 +43,151 @@ export const PlatformLoginForm: React.FC = () => {
     setPassword(demoPass);
   };
 
-  return (
-    <div className="min-h-screen bg-slate-950 flex flex-col justify-center py-12 sm:px-6 lg:px-8 text-slate-100 font-sans">
-      <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-indigo-500/20 text-indigo-400 mb-4 border border-indigo-500/30 font-black text-xl">
-          ROMS
-        </div>
-        <h2 className="text-3xl font-extrabold text-white tracking-tight">SaaS Control Plane</h2>
-        <p className="mt-2 text-sm text-slate-400">
-          Internal Platform Operator Portal
-        </p>
-      </div>
+  const inputClasses =
+    'h-9 w-full rounded-md border border-ops-border bg-white px-3 text-sm text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus transition-colors';
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-slate-900/90 backdrop-blur-md py-8 px-6 shadow-2xl rounded-2xl border border-slate-800 sm:px-10">
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-ops-canvas p-4">
+      <main className="flex w-full max-w-[380px] flex-col items-center">
+        {/* Sign-in card */}
+        <div className="w-full rounded-md border border-ops-border bg-white p-8 shadow-sm">
+          {/* Brand header */}
+          <header>
+            <div className="flex items-center gap-2">
+              <span
+                className="text-xl font-bold tracking-tight text-ops-text-primary"
+                style={{ letterSpacing: '-0.5px' }}
+              >
+                ROMS
+              </span>
+              <span className="rounded bg-ops-status-neutral-bg px-1.5 py-0.5 text-[11px] font-medium uppercase text-ops-text-secondary">
+                ADMIN
+              </span>
+            </div>
+            <h1 className="mt-4 text-[18px] font-semibold leading-snug text-ops-text-primary">
+              Sign in to the platform
+            </h1>
+            <p className="mb-6 mt-1 text-[13px] leading-relaxed text-ops-text-secondary">
+              Internal operations console for ROMS team members.
+            </p>
+          </header>
+
+          {/* Error alert */}
           {error && (
-            <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm flex items-start space-x-3">
-              <svg className="w-5 h-5 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span>{error}</span>
+            <div
+              role="alert"
+              aria-live="polite"
+              className="mb-5 rounded-md border border-ops-border bg-ops-status-critical-bg p-2.5 text-[13px] leading-snug text-ops-status-critical-text"
+            >
+              {error}
             </div>
           )}
 
-          <form className="space-y-6" onSubmit={handleSubmit}>
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
-                Platform Admin Email
+          {/* Sign-in form */}
+          <form className="space-y-4" onSubmit={handleSubmit} noValidate={false}>
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="login-email"
+                className="text-[13px] font-medium text-ops-text-primary"
+              >
+                Email
               </label>
-              <div className="mt-2">
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@himachalhospitality.com"
-                  className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all text-sm"
-                />
-              </div>
+              <input
+                id="login-email"
+                name="email"
+                type="email"
+                required
+                autoComplete="username"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@roms.internal"
+                className={inputClasses}
+              />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300">
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="login-password"
+                className="text-[13px] font-medium text-ops-text-primary"
+              >
                 Password
               </label>
-              <div className="mt-2">
+              <div className="relative flex items-center">
                 <input
-                  type="password"
+                  id="login-password"
+                  name="password"
+                  type={showPassword ? 'text' : 'password'}
                   required
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-4 py-3 rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all text-sm"
+                  className={`${inputClasses} pr-10`}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  aria-label="Toggle password visibility"
+                  className="absolute right-0 flex items-center pr-3 text-ops-text-secondary hover:text-ops-text-primary focus:outline-none"
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
               </div>
+              <p className="mt-1 text-xs leading-tight text-ops-text-secondary">
+                Need account access? Contact Platform Owner.
+              </p>
             </div>
 
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="w-full py-3.5 px-4 rounded-xl bg-indigo-500 hover:bg-indigo-600 focus:ring-4 focus:ring-indigo-500/30 text-white font-bold text-sm tracking-wide shadow-lg shadow-indigo-500/20 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex justify-center items-center"
-            >
-              {isSubmitting ? (
-                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-              ) : (
-                'Sign In to SaaS Control Plane'
-              )}
-            </button>
-          </form>
-
-          {/* Quick Demo Credentials Assistant */}
-          <div className="mt-6 pt-6 border-t border-slate-800">
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-3">
-              Platform Admin Credentials:
-            </p>
-            <div className="space-y-2">
+            <div className="pt-2">
               <button
-                type="button"
-                onClick={() => handleDemoLogin('admin@himachalhospitality.com', 'admin123')}
-                className="w-full text-left p-3 rounded-xl bg-slate-950 hover:bg-slate-800/80 border border-slate-800 transition-colors group flex items-center justify-between"
+                type="submit"
+                disabled={isSubmitting}
+                className="flex h-9 w-full items-center justify-center rounded-md bg-ops-accent px-4 text-sm font-medium text-white transition-colors hover:bg-ops-accent-hover focus:outline-none focus:ring-2 focus:ring-ops-accent-focus focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <div>
-                  <div className="text-xs font-semibold text-indigo-400 group-hover:text-indigo-300">
-                    Platform Administrator
-                  </div>
-                  <div className="text-[11px] text-slate-400">admin@himachalhospitality.com</div>
-                </div>
-                <span className="text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded">
-                  Select
-                </span>
+                {isSubmitting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                ) : (
+                  'Sign in'
+                )}
               </button>
             </div>
+          </form>
+
+          {/* Quick demo credentials assistant (retained existing convenience) */}
+          <div className="mt-6 border-t border-ops-border pt-6">
+            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-ops-text-secondary">
+              Platform Admin Credentials:
+            </p>
+            <button
+              type="button"
+              onClick={() => handleDemoLogin('admin@himachalhospitality.com', 'admin123')}
+              className="flex w-full items-center justify-between rounded-md border border-ops-border bg-white p-3 text-left transition-colors hover:bg-ops-canvas"
+            >
+              <div>
+                <div className="text-xs font-semibold text-ops-accent">
+                  Platform Administrator
+                </div>
+                <div className="text-[11px] text-ops-text-secondary">
+                  admin@himachalhospitality.com
+                </div>
+              </div>
+              <span className="rounded bg-ops-status-neutral-bg px-2 py-0.5 text-[10px] font-semibold text-ops-text-secondary">
+                Select
+              </span>
+            </button>
           </div>
         </div>
-      </div>
+
+        {/* Security footer */}
+        <footer className="mt-6 text-center">
+          <p className="text-xs text-ops-text-secondary">
+            ROMS Platform Control Plane · Restricted access
+          </p>
+        </footer>
+      </main>
     </div>
   );
 };

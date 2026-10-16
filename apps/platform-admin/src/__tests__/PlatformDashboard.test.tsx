@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { PlatformShell } from '../features/platform-admin/PlatformShell';
 import { DashboardOverview, calculateDashboardMetrics } from '../features/platform-admin/DashboardOverview';
-import { PlatformBusiness } from '@roms/shared-types';
+import { PlatformBusiness, PlatformAuditLogItem } from '@roms/shared-types';
 import { AuthProvider } from '@roms/api-client';
 import * as authContext from '@roms/api-client';
 
@@ -218,11 +218,11 @@ describe('PlatformShell Component', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByText('SaaS Control Plane')).toBeDefined();
+    expect(screen.getAllByText('Platform Admin').length).toBeGreaterThan(0);
     expect(screen.getByText('Inner Content')).toBeDefined();
 
     // Click Businesses navigation tab
-    const bizButtons = screen.getAllByText('Businesses & Outlets');
+    const bizButtons = screen.getAllByText('Businesses');
     expect(bizButtons.length).toBeGreaterThan(0);
     fireEvent.click(bizButtons[0]);
 
@@ -244,7 +244,8 @@ describe('PlatformShell Component', () => {
     expect(toggleButton).toBeDefined();
     fireEvent.click(toggleButton);
 
-    expect(screen.getByText('Navigation Menu')).toBeDefined();
+    expect(screen.getByText('Navigation')).toBeDefined();
+    expect(screen.getByLabelText('Close Navigation Menu')).toBeDefined();
   });
 
   it('completely hides Platform Admins navigation tab from desktop sidebar and mobile menu when user is Operator', () => {
@@ -274,11 +275,12 @@ describe('PlatformShell Component', () => {
       </MemoryRouter>
     );
 
-    // Platform Admins navigation entry should be completely hidden
+    // Team (Platform Admins) navigation entry should be completely hidden
+    expect(screen.queryByText('Team')).toBeNull();
     expect(screen.queryByText('Platform Admins')).toBeNull();
 
     // Other tabs should remain visible
-    expect(screen.getAllByText('Businesses & Outlets').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Businesses').length).toBeGreaterThan(0);
     expect(screen.getAllByText('Subscriptions').length).toBeGreaterThan(0);
 
     // Header badge displays Platform Operator
@@ -312,9 +314,28 @@ describe('PlatformShell Component', () => {
       </MemoryRouter>
     );
 
-    // Platform Admins tab is visible for Owner
-    expect(screen.getAllByText('Platform Admins').length).toBeGreaterThan(0);
+    // Team navigation is visible for Owner
+    expect(screen.getAllByText('Team').length).toBeGreaterThan(0);
     expect(screen.getByText('Platform Owner')).toBeDefined();
+  });
+
+  it('renders grouped navigation labels for the light shell', () => {
+    render(
+      <MemoryRouter>
+        <AuthProvider>
+          <PlatformShell activeTab="dashboard" onTabChange={vi.fn()}>
+            <div>Inner Content</div>
+          </PlatformShell>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Customers')).toBeDefined();
+    expect(screen.getByText('Commercial')).toBeDefined();
+    expect(screen.getByText('Platform')).toBeDefined();
+    expect(screen.getByText('Overview')).toBeDefined();
+    expect(screen.getByText('Plans')).toBeDefined();
+    expect(screen.getByText('Audit Logs')).toBeDefined();
   });
 });
 
@@ -349,7 +370,7 @@ describe('DashboardOverview Component', () => {
 
   const referenceDate = new Date('2026-10-10T12:00:00Z');
 
-  it('renders 5 metric cards and tenant overview table with Registered restaurant branches label', () => {
+  it('renders page header, four stat blocks, and needs-attention list', () => {
     render(
       <DashboardOverview
         businesses={sampleBusinesses}
@@ -359,10 +380,25 @@ describe('DashboardOverview Component', () => {
       />
     );
 
-    expect(screen.getByText('Platform Overview')).toBeDefined();
-    expect(screen.getAllByText('Himalayan Bistro').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Kasol Branch/)).toBeDefined();
-    expect(screen.getByText('Registered restaurant branches')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Overview' })).toBeDefined();
+    expect(screen.getByText('Current state of the platform.')).toBeDefined();
+
+    expect(screen.getByText('Businesses')).toBeDefined();
+    expect(screen.getByText('Outlets')).toBeDefined();
+    expect(screen.getByText('Active subscriptions')).toBeDefined();
+    expect(screen.getAllByText('Needs attention').length).toBeGreaterThan(0);
+
+    // 1 business, 1 outlet, 1 needing attention; 0 active subscriptions
+    expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(3);
+    expect(screen.getByText('0')).toBeDefined();
+
+    // Attention item: trial ending 5 days after the reference date
+    expect(screen.getByText(/Himalayan Bistro trial ends in 5 days/)).toBeDefined();
+    expect(screen.getAllByText('Trial').length).toBeGreaterThan(0);
+    expect(screen.getByText('Requires review')).toBeDefined();
+
+    // Recent activity empty state
+    expect(screen.getByText('No recent platform activity yet.')).toBeDefined();
   });
 
   it('renders loading spinner when loading and no data', () => {
@@ -411,5 +447,62 @@ describe('DashboardOverview Component', () => {
     const retryBtn = screen.getByRole('button', { name: /Retry Loading/i });
     fireEvent.click(retryBtn);
     expect(handleRetry).toHaveBeenCalled();
+  });
+
+  it('opens the business detail page when an attention row is clicked', () => {
+    const handleOpenBusiness = vi.fn();
+    render(
+      <DashboardOverview
+        businesses={sampleBusinesses}
+        loading={false}
+        error={null}
+        referenceDate={referenceDate}
+        onOpenBusiness={handleOpenBusiness}
+      />
+    );
+
+    fireEvent.click(screen.getByText(/Himalayan Bistro trial ends in 5 days/));
+    expect(handleOpenBusiness).toHaveBeenCalledWith('biz-1');
+  });
+
+  it('renders recent activity events and links to the audit logs tab', () => {
+    const handleNavigateTab = vi.fn();
+    const recentAuditLogs: PlatformAuditLogItem[] = [
+      {
+        id: 'log-1',
+        business_id: 'biz-1',
+        business_name: 'Himalayan Bistro',
+        outlet_id: null,
+        outlet_name: null,
+        actor_user_id: 'u-1',
+        actor_display_name: 'Aarav Mehta',
+        actor_email: 'aarav@roms.internal',
+        action: 'business_created',
+        entity_type: 'business',
+        entity_id: 'biz-1',
+        metadata_json: null,
+        created_at: '2026-10-10T10:30:00Z',
+      },
+    ];
+
+    render(
+      <DashboardOverview
+        businesses={sampleBusinesses}
+        recentAuditLogs={recentAuditLogs}
+        loading={false}
+        error={null}
+        referenceDate={referenceDate}
+        onNavigateTab={handleNavigateTab}
+      />
+    );
+
+    expect(screen.getByText(/Business created/)).toBeDefined();
+    expect(screen.getAllByText(/Himalayan Bistro/).length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/Aarav Mehta/)).toBeDefined();
+    expect(screen.getByText(/aarav@roms\.internal/)).toBeDefined();
+    expect(screen.getByText(/Showing the last 1 event/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audit logs' }));
+    expect(handleNavigateTab).toHaveBeenCalledWith('audit-logs');
   });
 });
