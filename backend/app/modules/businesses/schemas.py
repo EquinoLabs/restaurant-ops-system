@@ -117,35 +117,13 @@ class PlatformSubscriptionUpdate(BaseModel):
 
 
 class PlatformOutletManagerPayload(BaseModel):
-    """Optional manager assignment on outlet creation."""
-    user_id: Optional[uuid.UUID] = None
-    email: Optional[EmailStr] = None
-    password: Optional[str] = Field(default=None, min_length=8)
-    display_name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+    """Optional manager assignment on outlet creation (existing-user only).
 
-    @model_validator(mode="after")
-    def validate_mutually_exclusive_modes(self):
-        is_existing_mode = self.user_id is not None
-        has_new_fields = (
-            (self.email is not None)
-            or (self.password is not None)
-            or (self.display_name is not None)
-        )
-        if is_existing_mode and has_new_fields:
-            raise ValueError(
-                "Ambiguous manager request: specify either 'user_id' for existing-user assignment "
-                "OR ('email', 'password', 'display_name') for new-user creation, not both."
-            )
-        if is_existing_mode:
-            return self
-        if has_new_fields:
-            if not (self.email and self.password and self.display_name):
-                raise ValueError(
-                    "Incomplete manager request: new-user creation requires 'email', 'password', "
-                    "and 'display_name'. Alternatively, supply 'user_id' to assign an existing user."
-                )
-        # If no fields provided, this is an unset/empty payload — allowed
-        return self
+    Manager credential provisioning is not approved. Only an existing, active user
+    who already holds a BusinessMembership(role="manager") for the same business
+    may be assigned as an outlet manager.
+    """
+    user_id: uuid.UUID
 
 
 class PlatformOutletCreate(BaseModel):

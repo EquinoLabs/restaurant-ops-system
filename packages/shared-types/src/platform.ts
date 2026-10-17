@@ -111,10 +111,7 @@ export interface PlatformAssignOwnerPayload {
 }
 
 export interface PlatformOutletManagerPayload {
-  user_id?: string;
-  email?: string;
-  password?: string;
-  display_name?: string;
+  user_id: string;
 }
 
 export type PlatformUserRole = 'owner' | 'admin' | 'operator';
