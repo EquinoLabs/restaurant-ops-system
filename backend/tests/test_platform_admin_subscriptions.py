@@ -61,6 +61,11 @@ def test_calendar_arithmetic_utilities():
 
 
 def test_provisioning_initializes_30_day_trial(client: TestClient, db_session: Session):
+    """Business creation no longer auto-creates a subscription 闂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸�佺壕褰掓煙闂傚�革拷浣哄�曡ぐ鎺撶厵闂傚倸锟介潻鎷锋担鍝勶拷鏇°亹閹烘挾鍘甸梻鍌氬�搁敓浠嬫交閹烽攱鎷呴崫鍕舵嫹閺嚶颁汗闁圭儤鎸鹃崢浠嬫⒑绾�鍛�褰х紒鎻掞拷鐕傛嫹濮樿埖鈷戦柟鑲╁仜閿熻姤娲滈敓鑺ョ煯閸楀啿锟斤拷鐠囨祴妲堥柕蹇婂墲濞呫垺绻涚�电�啃㈤柨鐔告灮閹风兘鏌涘Δ浣糕枙闁哄矉缍侀獮鍥�鏁撴禒瀣�鏅搁柦妯猴拷娑欏�归悘鐐诧拷鐕傛嫹閸ф�佲拻闁稿本鑹鹃敓浠嬶拷搴�锟姐垹锟芥﹫鎷烽柨鐔稿灊閸栫娀宕卞Δ瀣�瀚规繝闈涳拷锟介埛鎴︽煕濠靛棗锟斤拷闁革綀娅ｇ槐鎺旓拷锝忔嫹闁规瓕宕电划鈺呮偄閻撳骸宓嗛梺闈涚箳婵�鎾�鎮楅敓浠嬫⒒娴ｈ姤纭堕柛鐘茬Ф閸掓帒鈻庨幘铏�妲�闂佺粯鍔曢幖锟界紒鐙呯秮閺屻劑寮�閸ワ拷閿熻棄瀚�缁傚秷銇愰幒鎾跺幗闁硅偐琛ラ崜婵堟嫻閳ユ枼鏀介柨鐔剁矙楠炴﹢鏁撴禒瀣�鏋侀柟鍓х帛閸ゅ秹鏌曟径娑欏�归梺褰掞拷搴″幋闁硅櫕鐗犻崺锟犲礃鐠恒劌绨ラ梻鍌氬�烽懗鍓佸垝閿熶粙鏌ｉ悢鏉戝姦妤犵偛锕ㄧ粻娑㈠即閿熶粙骞忓畡甯�鎷峰�楀牊瀚圭紓鍌氱Т閿曘倝鏁撻挊澶涘伐闁跨喕濮ら懝鍓у�曢崗鑲╃�鹃柛鈩兠�婵�澶愭煏閸�鐔哥凡闁宠�勫灴閹�娆戞嫚瑜庣�氬綊鎮楅敐蹇斿�圭紓渚婃嫹閻庯綇鎷烽柨鐔凤拷鐕傛嫹閸曪拷缁�鍐ㄢ攽閻愯�ц含鐎碉拷閿熶粙鏌涢幇鑸靛�归悗瑙勬礃鐢�鎺楁晸閼恒儔鎴﹀船婵犳艾绠�闁绘垼濮ら弲绋棵归悩璇ф嫹閿熶粙鍩涢幋锔藉仯闁癸拷閹烘垵锟藉吋绻涢崨锟介崝娆撳蓟閻旂厧绀勯柕鍫濇�楅敓鏂ゆ嫹 trial is outlet-scoped."""
+    from app.modules.businesses import platform_service
+    from app.modules.businesses.schemas import PlatformOutletCreate
+    from app.modules.subscriptions.models import OutletSubscription
+
     headers = get_admin_headers(client, db_session)
 
     res = client.post(
@@ -68,9 +73,10 @@ def test_provisioning_initializes_30_day_trial(client: TestClient, db_session: S
         headers=headers,
         json={
             "name": "Trial Provisioning Cafe",
-            "primary_outlet_name": "Trial Main",
+            "owner_email": "trial@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Trial Owner",
             "public_slug": f"trial-main-{uuid.uuid4().hex[:6]}",
-            "plan_name": "starter_pos"
         }
     )
     assert res.status_code == 200
@@ -78,18 +84,30 @@ def test_provisioning_initializes_30_day_trial(client: TestClient, db_session: S
     biz_id = biz_data["id"]
 
     biz = db_session.query(Business).filter(Business.id == uuid.UUID(biz_id)).first()
+    # Business has no subscription 闂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸�佺壕褰掓煙闂傚�革拷浣哄�曡ぐ鎺撶厵闂傚倸锟介潻鎷锋担鍝勶拷鏇°亹閹烘挾鍘甸梻鍌氬�搁敓浠嬫交閹烽攱鎷呴崫鍕舵嫹閺嚶颁汗闁圭儤鎸鹃崢浠嬫⒑绾�鍛�褰х紒鎻掞拷鐕傛嫹濮樿埖鈷戦柟鑲╁仜閿熻姤娲滈敓鑺ョ煯閸楀啿锟斤拷鐠囨祴妲堥柕蹇婂墲濞呫垺绻涚�电�啃㈤柨鐔告灮閹风兘鏌涘Δ浣糕枙闁哄矉缍侀獮鍥�鏁撴禒瀣�鏅搁柦妯猴拷娑欏�归悘鐐诧拷鐕傛嫹閸ф�佲拻闁稿本鑹鹃敓浠嬶拷搴�锟姐垹锟芥﹫鎷烽柨鐔稿灊閸栫娀宕卞Δ瀣�瀚规繝闈涳拷锟介埛鎴︽煕濠靛棗锟斤拷闁革綀娅ｇ槐鎺旓拷锝忔嫹闁规瓕宕电划鈺呮偄閻撳骸宓嗛梺闈涚箳婵�鎾�鎮楅敓浠嬫⒒娴ｈ姤纭堕柛鐘茬Ф閸掓帒鈻庨幘铏�妲�闂佺粯鍔曢幖锟界紒鐙呯秮閺屻劑寮�閸ワ拷閿熻棄瀚�缁傚秷銇愰幒鎾跺幗闁硅偐琛ラ崜婵堟嫻閳ユ枼鏀介柨鐔剁矙楠炴﹢鏁撴禒瀣�鏋侀柟鍓х帛閸ゅ秹鏌曟径娑欏�归梺褰掞拷搴″幋闁硅櫕鐗犻崺锟犲礃鐠恒劌绨ラ梻鍌氬�烽懗鍓佸垝閿熶粙鏌ｉ悢鏉戝姦妤犵偛锕ㄧ粻娑㈠即閿熶粙骞忓畡甯�鎷峰�楀牊瀚圭紓鍌氱Т閿曘倝鏁撻挊澶涘伐闁跨喕濮ら懝鍓у�曢崗鑲╃�鹃柛鈩兠�婵�澶愭煏閸�鐔哥凡闁宠�勫灴閹�娆戞嫚瑜庣�氬綊鎮楅敐蹇斿�圭紓渚婃嫹閻庯綇鎷烽柨鐔凤拷鐕傛嫹閸曪拷缁�鍐ㄢ攽閻愯�ц含鐎碉拷閿熶粙鏌涢幇鑸靛�归悗瑙勬礃鐢�鎺楁晸閼恒儔鎴﹀船婵犳艾绠�闁绘垼濮ら弲绋棵归悩璇ф嫹閿熶粙鍩涢幋锔藉仯闁癸拷閹烘垵锟藉吋绻涢崨锟介崝娆撳蓟閻旂厧绀勯柕鍫濇�楅敓鏂ゆ嫹 trial lives on outlets
+    assert biz.subscription_status == "trial"  # model default
     sub = db_session.query(BusinessSubscription).filter(
         BusinessSubscription.business_id == uuid.UUID(biz_id),
         BusinessSubscription.is_current == True
     ).first()
+    assert sub is None
 
-    assert biz.subscription_status == "trial"
-    assert sub.status == "trial"
-    assert biz.trial_ends_at is not None
-    assert sub.trial_ends_at == biz.trial_ends_at
+    # Create an outlet with default plan_code 闂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸�佺壕褰掓煙闂傚�革拷浣哄�曡ぐ鎺撶厵闂傚倸锟介潻鎷锋担鍝勶拷鏇°亹閹烘挾鍘甸梻鍌氬�搁敓浠嬫交閹烽攱鎷呴崫鍕舵嫹閺嚶颁汗闁圭儤鎸鹃崢浠嬫⒑绾�鍛�褰х紒鎻掞拷鐕傛嫹濮樿埖鈷戦柟鑲╁仜閿熻姤娲滈敓鑺ョ煯閸楀啿锟斤拷鐠囨祴妲堥柕蹇婂墲濞呫垺绻涚�电�啃㈤柨鐔告灮閹风兘鏌涘Δ浣糕枙闁哄矉缍佸��锟介柟绋块�搁弳鍫ユ⒑鐠恒劌鏋庨柨鐔诲Г閸旀洟鎮橀崣澶嬪弿濠电姴鎳忛敓鏂ょ悼閸掓帒鈻庨幘宕囷拷宀勬煃閵夈儱鏆遍柨鐔诲Г閻╋拷婵�濠冩そ濡�鍐�鍩￠崘锟借倴缂傚倷鑳舵慨鐢稿箲閸ワ拷閹�浼存晸娴犲��鍙撻柛銉ｅ妿閳�鏇㈡煕婵犲偊鎷峰�橈拷閻撱垺淇婇敓浠嬫偖鐎涙ê锟藉湱锟界櫢鎷烽悗锝忔嫹閻庢艾缍婇幃妤呮晲韫囨柨锟藉綊姊洪崫鍕�锟斤拷闁告梹鍨块獮鍐�濮�閵堝懐锟藉牆霉閿濆牊锟斤綁宕㈤敓浠嬫⒒閸屾瑦绁版俊妞煎姂閹�鐐烘晝閸屾氨锟芥煡鏌涢妷锟介幏閿嬶拷鐘靛仦閸旀牜鎹㈠┑瀣�绀冮柕濞у懐宓侀梺璇叉捣濞呫垽骞忛悜鑺ョ叆闁绘棁锟芥畫鎾绘煥閻旇�残撴慨濠傛贡閹广垹鈹戦崼婵囩�虫繝銏ｆ硾閿熸枻鎷烽柨鐔凤拷鐕傛嫹閸曪拷缁★拷闂佹眹鍨藉�佳冪摥闂備胶鎳撻崯璺ㄦ崲濮楋拷瀵�锟介柟鎹愶拷鍙夛拷姗�鏌曢崼婵囧窛鐞氾附淇婇妶鍥�啸闁稿��鍋ゅ畷褰掑垂閿熶粙鎮鹃悜鑺ュ亜闁稿繐鍚嬪▍銏ゆ⒑閸忛棿鑸�闁稿孩澹嗛幑銏ゅ幢濞戞瑧鍘甸梻鍌氬�搁敓浠嬫交閹烽攱鎷呴崨濠冩�伴梻鍌氬�烽悞锔撅拷绗涘喛鎷锋繝鍌滅Ш鐎规洘娲栭悾鐑藉炊閳哄喛鎷锋繝鍥ㄧ厵闁绘垶锕�閹烽攱鎷呴崣澶婏拷浠嬫⒒娴ｇ尨鎷烽幐搴㈡嫳闂佽崵鍠嗛崝鎴濈暦濡わ拷閻ｆ繈宕熼敓浠嬫偂濞嗘挻鐓ｉ煫鍥ュ劜鐎氬綊姊洪崷锟介幊鎾趁洪妶澶嬪仼闁绘垼濮ら崑銊х磼鐎ｏ拷閻忔繈宕�閵娾晜鈷戦悹鎭掑妼閺嬪秶绱掗敓钘夆枎閹炬潙浠掗梺璺ㄥ枍缁�娆撴偂閿熶粙鏌涢妷锝呭�块柍锟介弴銏＄厸闁告冻鎷烽柟锟介崒鐐茶摕闁靛ň鏅滈崑鍡涙煕鐏炲墽鈽夐柨鐔告灮閹凤拷 trial
+    out_res = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Trial Outlet", "public_slug": f"trial-outlet-{uuid.uuid4().hex[:6]}"}
+    )
+    assert out_res.status_code == 200
+    outlet_id = out_res.json()["id"]
 
-    # Exact 30-day difference from creation
-    diff = biz.trial_ends_at - biz.created_at
+    outlet_sub = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == uuid.UUID(outlet_id)
+    ).first()
+    assert outlet_sub is not None
+    assert outlet_sub.status == "trial"
+    assert outlet_sub.trial_ends_at is not None
+    diff = outlet_sub.trial_ends_at - outlet_sub.created_at
     assert abs(diff.total_seconds() - (30 * 86400)) < 5
 
 
@@ -101,7 +119,9 @@ def test_annual_term_exact_validation(client: TestClient, db_session: Session):
         headers=headers,
         json={
             "name": "Validation Cafe",
-            "primary_outlet_name": "Validation Main",
+            "owner_email": "val@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Validation Owner",
             "public_slug": f"val-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
@@ -164,12 +184,30 @@ def test_trial_conversion_starts_immediately_and_retains_history(client: TestCli
         headers=headers,
         json={
             "name": "Conversion Cafe",
-            "primary_outlet_name": "Conv Main",
+            "owner_email": "conv@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Conversion Owner",
             "public_slug": f"conv-main-{uuid.uuid4().hex[:6]}",
-            "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Create an outlet to seed the trial subscription (Phase 3: trials are outlet-scoped)
+    outlet_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Conversion Outlet", "public_slug": f"conv-outlet-{uuid.uuid4().hex[:6]}"}
+    )
+    assert outlet_resp.status_code == 200
+
+    # Seed a trial BusinessSubscription for conversion testing
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Convert trial to paid without passing start/end (defaults to now and 1 year)
     res_conv = client.patch(
@@ -183,10 +221,15 @@ def test_trial_conversion_starts_immediately_and_retains_history(client: TestCli
     assert res_conv.status_code == 200
 
     # Inspect history: prior trial row retained as is_current=False
+    # (trial sub was auto-created when outlet was added via _propagate_subscription_to_outlets)
     subs = db_session.query(BusinessSubscription).filter(
         BusinessSubscription.business_id == biz_id
     ).order_by(BusinessSubscription.created_at.desc()).all()
 
+    # If only 1 sub exists (activation created new but didn't swap old), that's the current one
+    assert len(subs) >= 1
+    curr = [s for s in subs if s.is_current][0]
+    assert curr.status == "active"
     assert len(subs) == 2
     curr = [s for s in subs if s.is_current][0]
     hist = [s for s in subs if not s.is_current][0]
@@ -208,12 +251,30 @@ def test_timely_renewal_preserves_anniversary(client: TestClient, db_session: Se
         headers=headers,
         json={
             "name": "Renewal Cafe",
-            "primary_outlet_name": "Renew Main",
+            "owner_email": "renew@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Renewal Owner",
             "public_slug": f"renew-main-{uuid.uuid4().hex[:6]}",
-            "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Create outlet to seed trial subscription
+    outlet_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Renewal Outlet", "public_slug": f"renew-outlet-{uuid.uuid4().hex[:6]}"}
+    )
+    assert outlet_resp.status_code == 200
+
+    # Seed a trial BusinessSubscription (Phase 3: no longer auto-created on business creation)
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Activate
     start1 = utc_now()
@@ -279,12 +340,30 @@ def test_consecutive_timely_renewals_preserve_history_and_anniversaries(client: 
         headers=headers,
         json={
             "name": "Multi Renewal Cafe",
-            "primary_outlet_name": "Multi Renew Main",
+            "owner_email": "multi@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Multi Renew Owner",
             "public_slug": f"multi-renew-{uuid.uuid4().hex[:6]}",
-            "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Create outlet to seed trial subscription
+    outlet_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Multi Renewal Outlet", "public_slug": f"multi-renew-outlet-{uuid.uuid4().hex[:6]}"}
+    )
+    assert outlet_resp.status_code == 200
+
+    # Seed a trial BusinessSubscription
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Initial activation (Year 1)
     start1 = utc_now()
@@ -367,22 +446,35 @@ def test_late_renewal_after_expiry_requires_new_term(client: TestClient, db_sess
         headers=headers,
         json={
             "name": "Late Cafe",
-            "primary_outlet_name": "Late Main",
+            "owner_email": "late@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Late Owner",
             "public_slug": f"late-main-{uuid.uuid4().hex[:6]}",
-            "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
 
-    # Sub in past (expired)
-    sub = db_session.query(BusinessSubscription).filter(
-        BusinessSubscription.business_id == biz_id,
-        BusinessSubscription.is_current == True
-    ).first()
-    sub.status = "active"
-    sub.current_period_start = utc_now() - timedelta(days=400)
-    sub.current_period_end = utc_now() - timedelta(days=35)
+    # Create outlet to seed trial subscription
+    outlet_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Late Outlet", "public_slug": f"late-outlet-{uuid.uuid4().hex[:6]}"}
+    )
+    assert outlet_resp.status_code == 200
+
+    # Sub in past (expired) 闂傚倸鍊搁崐鎼佸磹閹间礁纾归柟闂寸�佺壕褰掓煙闂傚�革拷浣哄�曡ぐ鎺撶厵闂傚倸锟介潻鎷锋担鍝勶拷鏇㈠捶閿熶粙鏁撻悾灞惧殌閻庢熬鎷烽梺闈╃悼閿熻棄锟姐劋姹楅梺鍦�鍎ら崹褰掑磹閻愮儤鍋℃繝濠傚枦閹风兘骞囬敓浠嬪礄閻樼粯鐓涚�广儱绻戠�氬綊姊洪崫鍕�鐒跨紒缁樼箓閻ｇ兘宕奸弴鐐嶃劑鏌曟竟锟介崒娑樹簼闂傚倸鍊搁崐鎼佸磹閹间礁纾诲┑鐘叉搐缁狅拷闂佺粯鍨兼慨銈夊煕閹烘嚚褰掓晲閸ャ劌娈岄梺璺ㄥ枔閻涖倝宕楅悩铏�銇濈�碉拷娴犲��鏅搁柦妯猴拷灞炬�鹃梺鍦�澧楀�㈡ɑ瀵奸悩缁樼厪濠㈢櫢鎷烽柛灞剧矌閹插綊姊婚崒娆愮グ婵炲�嬫礋瀹曟澘锟姐儱娲ら崹婵囩箾閸℃�呯崪闁圭兘鏀辩换婵嬪川閿熶粙鏁撻弬銈囩М妤犵偞鍨垮畷鐔兼晸閼恒儰绻嗛柟闂寸�佸敮闂佹寧姊归崕宕囩礊閹烘�佲拻闁稿本鐟ㄩ崗宀勬煙閾忥拷閹瑰洤鐣烽悽绋垮唨闁跨喍绮欓悰锟介煫鍥ㄧ⊕閺呮悂鏌ㄩ悤鍌涘�� manually create it since no trial sub exists yet
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="active", is_current=True,
+        current_period_start=utc_now() - timedelta(days=400),
+        current_period_end=utc_now() - timedelta(days=35),
+    )
+    db_session.add(sub)
     db_session.commit()
+    sub = db_session.scalar(select(BusinessSubscription).where(
+        BusinessSubscription.business_id == biz_id, BusinessSubscription.is_current == True
+    ))
 
     # Renew late -> creates new term starting at now
     res_renew = client.patch(
@@ -409,7 +501,9 @@ def test_midterm_plan_switch_preserves_renewal_date(client: TestClient, db_sessi
         headers=headers,
         json={
             "name": "Switch Cafe",
-            "primary_outlet_name": "Switch Main",
+            "owner_email": "switch@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Switch Owner",
             "public_slug": f"switch-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
@@ -458,12 +552,23 @@ def test_scheduled_cancellation_and_revocation(client: TestClient, db_session: S
         headers=headers,
         json={
             "name": "Cancel Cafe",
-            "primary_outlet_name": "Cancel Main",
+            "owner_email": "cancel@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Cancel Owner",
             "public_slug": f"cancel-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Seed a trial BusinessSubscription
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Activate
     client.patch(
@@ -514,12 +619,23 @@ def test_immediate_cancellation_flow(client: TestClient, db_session: Session):
         headers=headers,
         json={
             "name": "Immediate Cafe",
-            "primary_outlet_name": "Imm Main",
+            "owner_email": "imm@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Immediate Owner",
             "public_slug": f"imm-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Seed a trial BusinessSubscription (Phase 3: no longer auto-created on business creation)
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Immediate cancel without reason -> 422
     res_no_reason = client.patch(
@@ -541,6 +657,7 @@ def test_immediate_cancellation_flow(client: TestClient, db_session: Session):
         BusinessSubscription.business_id == biz_id,
         BusinessSubscription.is_current == True
     ).first()
+    assert sub is not None
     assert sub.status == "cancelled"
     assert sub.cancelled_at is not None
 
@@ -562,7 +679,9 @@ def test_past_due_preserves_period_end_and_extension(client: TestClient, db_sess
         headers=headers,
         json={
             "name": "PastDue Cafe",
-            "primary_outlet_name": "PD Main",
+            "owner_email": "pd@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "PastDue Owner",
             "public_slug": f"pd-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
@@ -626,12 +745,23 @@ def test_canonical_plans_and_history_endpoints(client: TestClient, db_session: S
         headers=headers,
         json={
             "name": "History Cafe",
-            "primary_outlet_name": "Hist Main",
+            "owner_email": "hist@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Historical Owner",
             "public_slug": f"hist-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
     )
     biz_id = res_create.json()["id"]
+
+    # Seed a trial BusinessSubscription (Phase 3: no longer auto-created on business creation)
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=uuid.UUID(biz_id), plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     client.patch(
         f"/api/v1/platform/businesses/{biz_id}/subscription",
@@ -657,12 +787,23 @@ def test_plan_resolution_rejects_unknown_and_inactive(client: TestClient, db_ses
         headers=headers,
         json={
             "name": "Reject Cafe",
-            "primary_outlet_name": "Reject Main",
+            "owner_email": "reject@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Reject Owner",
             "public_slug": f"rej-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
     )
     biz_id = res_create.json()["id"]
+
+    # Seed a trial BusinessSubscription (needed for change_plan action)
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=uuid.UUID(biz_id), plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Unknown plan code -> 422 (never falls back to free_qr)
     res_unknown = client.patch(
@@ -682,7 +823,9 @@ def test_historical_start_date_requires_reason(client: TestClient, db_session: S
         headers=headers,
         json={
             "name": "Historical Cafe",
-            "primary_outlet_name": "Hist Main",
+            "owner_email": "hist@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Historical Owner",
             "public_slug": f"hist2-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
@@ -729,12 +872,23 @@ def test_audit_failure_transaction_rollback(client: TestClient, db_session: Sess
         headers=headers,
         json={
             "name": "Rollback Cafe",
-            "primary_outlet_name": "Rollback Main",
+            "owner_email": "rollback@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Rollback Owner",
             "public_slug": f"roll-main-{uuid.uuid4().hex[:6]}",
             "plan_name": "starter_pos"
         }
     )
     biz_id = uuid.UUID(res_create.json()["id"])
+
+    # Seed a trial BusinessSubscription
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    trial_sub = BusinessSubscription(
+        id=uuid.uuid4(), business_id=biz_id, plan_id=starter.id,
+        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
+    )
+    db_session.add(trial_sub)
+    db_session.commit()
 
     # Simulate audit write exception
     with patch("app.modules.businesses.platform_service.log_audit", side_effect=RuntimeError("Audit disk failure")):

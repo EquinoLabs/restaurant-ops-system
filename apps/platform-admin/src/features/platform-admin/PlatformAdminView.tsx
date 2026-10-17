@@ -88,19 +88,18 @@ export const PlatformAdminView: React.FC = () => {
   const [selectedBizForSub, setSelectedBizForSub] = useState<PlatformBusiness | null>(null);
 
   const [isOwnerModalOpen, setIsOwnerModalOpen] = useState<boolean>(false);
-  const [selectedOutletForOwner, setSelectedOutletForOwner] = useState<{ bizId: string; outlet: PlatformOutlet } | null>(null);
+  const [selectedBizForOwner, setSelectedBizForOwner] = useState<PlatformBusiness | null>(null);
 
   // Form states
   const [bizForm, setBizForm] = useState<PlatformBusinessCreatePayload>({
     name: '',
-    primary_outlet_name: '',
+    owner_email: '',
+    owner_password: '',
+    owner_display_name: '',
     public_slug: '',
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
-    subscription_status: 'trial',
-    plan_name: 'starter',
-    max_outlets: 2,
   });
 
   const [subForm, setSubForm] = useState<{
@@ -121,10 +120,10 @@ export const PlatformAdminView: React.FC = () => {
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
+    plan_code: 'trial',
   });
 
   const [ownerForm, setOwnerForm] = useState<PlatformAssignOwnerPayload>({
-    outlet_id: '',
     email: '',
     password: '',
     display_name: '',
@@ -156,26 +155,25 @@ export const PlatformAdminView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
 
-    if (!bizForm.name.trim() || !bizForm.primary_outlet_name.trim() || !bizForm.public_slug.trim()) {
-      setError('Business name, primary outlet name, and public slug are required.');
+    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim() || !bizForm.public_slug.trim()) {
+      setError('Business name, owner details, and public slug are required.');
       return;
     }
 
     try {
       setIsSubmitting(true);
       const created = await createPlatformBusiness(bizForm, token);
-      setSuccessMessage(`Business '${created.name}' and primary outlet created successfully!`);
+      setSuccessMessage(`Business '${created.name}' created successfully!`);
       setIsBizModalOpen(false);
       setBizForm({
         name: '',
-        primary_outlet_name: '',
+        owner_email: '',
+        owner_password: '',
+        owner_display_name: '',
         public_slug: '',
         currency: 'INR',
         timezone: 'Asia/Kolkata',
         address: '',
-        subscription_status: 'trial',
-        plan_name: 'starter',
-        max_outlets: 2,
       });
       await loadBusinesses();
     } catch (err: any) {
@@ -252,6 +250,7 @@ export const PlatformAdminView: React.FC = () => {
         currency: 'INR',
         timezone: 'Asia/Kolkata',
         address: '',
+        plan_code: 'trial',
       });
       await loadBusinesses();
     } catch (err: any) {
@@ -263,7 +262,7 @@ export const PlatformAdminView: React.FC = () => {
 
   const handleAssignOwnerSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!token || !selectedOutletForOwner) return;
+    if (!token || !selectedBizForOwner) return;
     setError(null);
     setSuccessMessage(null);
 
@@ -275,17 +274,14 @@ export const PlatformAdminView: React.FC = () => {
     try {
       setIsSubmitting(true);
       await assignPlatformOwner(
-        selectedOutletForOwner.bizId,
-        {
-          ...ownerForm,
-          outlet_id: selectedOutletForOwner.outlet.id,
-        },
+        selectedBizForOwner.id,
+        ownerForm,
         token
       );
-      setSuccessMessage(`Owner user '${ownerForm.email}' assigned to outlet '${selectedOutletForOwner.outlet.name}'!`);
+      setSuccessMessage(`Owner user '${ownerForm.email}' assigned to business '${selectedBizForOwner.name}'!`);
       setIsOwnerModalOpen(false);
-      setSelectedOutletForOwner(null);
-      setOwnerForm({ outlet_id: '', email: '', password: '', display_name: '' });
+      setSelectedBizForOwner(null);
+      setOwnerForm({ email: '', password: '', display_name: '' });
       await loadBusinesses();
     } catch (err: any) {
       setError(err.message || 'Failed to assign owner.');
@@ -325,8 +321,9 @@ export const PlatformAdminView: React.FC = () => {
             setSelectedBizForOutlet(biz);
             setIsOutletModalOpen(true);
           }}
-          onOpenOwnerModal={(bizId, outlet) => {
-            setSelectedOutletForOwner({ bizId, outlet });
+          onOpenOwnerModal={(bizId) => {
+            const biz = businesses.find(b => b.id === bizId);
+            if (biz) setSelectedBizForOwner(biz);
             setIsOwnerModalOpen(true);
           }}
           onBusinessUpdated={loadBusinesses}
@@ -466,18 +463,6 @@ export const PlatformAdminView: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold uppercase text-slate-300">Primary Outlet Name *</label>
-                <input
-                  type="text"
-                  required
-                  value={bizForm.primary_outlet_name}
-                  onChange={(e) => setBizForm({ ...bizForm, primary_outlet_name: e.target.value })}
-                  placeholder="e.g. Riverside Camp Restaurant"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
-
-              <div>
                 <label className="block text-xs font-semibold uppercase text-slate-300">Public Slug (QR Menu Identifier) *</label>
                 <input
                   type="text"
@@ -485,29 +470,29 @@ export const PlatformAdminView: React.FC = () => {
                   value={bizForm.public_slug}
                   onChange={(e) => setBizForm({ ...bizForm, public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-') })}
                   placeholder="e.g. riverside-camp"
-                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-amber-400 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">Plan Tier Name</label>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">Currency</label>
                   <input
                     type="text"
-                    value={bizForm.plan_name || ''}
-                    onChange={(e) => setBizForm({ ...bizForm, plan_name: e.target.value })}
-                    placeholder="e.g. starter"
-                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    value={bizForm.currency || ''}
+                    onChange={(e) => setBizForm({ ...bizForm, currency: e.target.value.toUpperCase() })}
+                    placeholder="INR"
+                    maxLength={3}
+                    className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold uppercase text-slate-300">Max Outlets Limit</label>
+                  <label className="block text-xs font-semibold uppercase text-slate-300">Timezone</label>
                   <input
-                    type="number"
-                    min="1"
-                    value={bizForm.max_outlets ?? ''}
-                    onChange={(e) => setBizForm({ ...bizForm, max_outlets: e.target.value ? parseInt(e.target.value, 10) : null })}
-                    placeholder="e.g. 2"
+                    type="text"
+                    value={bizForm.timezone || ''}
+                    onChange={(e) => setBizForm({ ...bizForm, timezone: e.target.value })}
+                    placeholder="Asia/Kolkata"
                     className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
@@ -522,6 +507,45 @@ export const PlatformAdminView: React.FC = () => {
                   placeholder="Kasol Highway, HP"
                   className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+              </div>
+
+              <div className="pt-4 border-t border-slate-800">
+                <label className="block text-xs font-semibold uppercase text-slate-400 mb-3">Owner Assignment (Required)</label>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-slate-400">Owner Email *</label>
+                    <input
+                      type="email"
+                      required
+                      value={bizForm.owner_email}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_email: e.target.value })}
+                      placeholder="owner@restaurant.com"
+                      className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400">Owner Display Name *</label>
+                    <input
+                      type="text"
+                      required
+                      value={bizForm.owner_display_name}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_display_name: e.target.value })}
+                      placeholder="e.g. Ramesh Kumar"
+                      className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-slate-400">Initial Password *</label>
+                    <input
+                      type="password"
+                      required
+                      value={bizForm.owner_password}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_password: e.target.value })}
+                      placeholder="Minimum 8 characters"
+                      className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
@@ -581,6 +605,22 @@ export const PlatformAdminView: React.FC = () => {
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold uppercase text-slate-300">Plan</label>
+                <select
+                  value={outletForm.plan_code ?? 'trial'}
+                  onChange={(e) => setOutletForm({ ...outletForm, plan_code: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-xl bg-slate-800 border border-slate-700 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="trial">Trial — 30-day trial on Starter POS</option>
+                  <option value="starter_pos">Starter POS — active subscription</option>
+                  <option value="growth_pos">Growth POS — active subscription</option>
+                  <option value="pro_kds">Pro KDS — active subscription</option>
+                  <option value="enterprise">Enterprise — active subscription</option>
+                  <option value="free_qr">Free QR Menu — non-expiring</option>
+                </select>
+              </div>
+
               <div className="pt-4 border-t border-slate-800 flex justify-end space-x-3">
                 <button
                   type="button"
@@ -602,13 +642,13 @@ export const PlatformAdminView: React.FC = () => {
         </div>
       )}
 
-      {/* Assign Owner User Modal */}
-      {isOwnerModalOpen && selectedOutletForOwner && (
+      {/* Assign Owner Modal */}
+      {isOwnerModalOpen && selectedBizForOwner && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
           <div className="bg-slate-900 border border-slate-700/80 rounded-2xl max-w-lg w-full p-6 shadow-2xl text-slate-100">
             <div className="flex justify-between items-center pb-4 border-b border-slate-800">
               <h3 className="text-lg font-bold text-white">
-                Assign Owner for {selectedOutletForOwner.outlet.name}
+                Assign Owner for {selectedBizForOwner.name}
               </h3>
               <button onClick={() => setIsOwnerModalOpen(false)} className="text-slate-400 hover:text-white p-1">
                 ✕

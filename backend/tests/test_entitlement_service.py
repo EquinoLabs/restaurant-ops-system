@@ -406,3 +406,67 @@ def test_unknown_feature_code_fails_closed(db_session):
     assert res.authorized is False
     assert res.reason == "FEATURE_NOT_INCLUDED_IN_PLAN"
 
+
+def test_free_qr_outlet_subscription_with_null_period_end_is_active(db_session):
+    """free_qr plan must remain active even when current_period_end is NULL (non-expiring semantics)."""
+    from app.modules.subscriptions.models import OutletSubscription
+    from app.modules.outlets.models import Outlet
+
+    now = utc_now()
+    b = Business(id=uuid.uuid4(), name="Free QR Biz", status="active")
+    o = Outlet(id=uuid.uuid4(), business_id=b.id, name="Free Outlet", public_slug="free-outlet")
+    db_session.add_all([b, o])
+    db_session.commit()
+
+    p_free = db_session.scalar(select(Plan).where(Plan.code == "free_qr"))
+    sub = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=o.id,
+        business_id=b.id,
+        plan_id=p_free.id,
+        status="active",
+        is_current=True,
+        trial_ends_at=None,
+        current_period_start=None,
+        current_period_end=None,  # NULL — no expiry
+        cancel_at_period_end=False,
+        cancelled_at=None,
+    )
+    db_session.add(sub)
+    db_session.commit()
+
+    result = EntitlementService.evaluate_subscription_status(sub, now=now)
+    assert result == "active", "free_qr with NULL current_period_end must stay active"
+
+
+def test_non_free_qr_outlet_subscription_with_null_period_end_is_expired(db_session):
+    """Non-free_qr plans with NULL current_period_end must still be expired (fail-closed)."""
+    from app.modules.subscriptions.models import OutletSubscription
+    from app.modules.outlets.models import Outlet
+
+    now = utc_now()
+    b = Business(id=uuid.uuid4(), name="Starter Biz", status="active")
+    o = Outlet(id=uuid.uuid4(), business_id=b.id, name="Starter Outlet", public_slug="starter-outlet")
+    db_session.add_all([b, o])
+    db_session.commit()
+
+    p_starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    sub = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=o.id,
+        business_id=b.id,
+        plan_id=p_starter.id,
+        status="active",
+        is_current=True,
+        trial_ends_at=None,
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+        cancelled_at=None,
+    )
+    db_session.add(sub)
+    db_session.commit()
+
+    result = EntitlementService.evaluate_subscription_status(sub, now=now)
+    assert result == "expired", "starter_pos with NULL current_period_end must be expired"
+

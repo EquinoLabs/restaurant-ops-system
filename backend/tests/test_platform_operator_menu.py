@@ -486,7 +486,9 @@ def test_operator_denied_on_commercial_governance_and_tenant_routes(client: Test
     assert client.post(f"/api/v1/platform/admins/{admin_user_id}/revoke", headers=headers).status_code == 403
 
     # 3. Provisioning Endpoints -> 403 Forbidden
-    assert client.post("/api/v1/platform/businesses", headers=headers, json={"name": "Biz", "primary_outlet_name": "Out", "public_slug": "slug"}).status_code == 403
+    assert client.post("/api/v1/platform/businesses", headers=headers, json={"name": "Biz", "owner_email": "op@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Op Owner", "public_slug": "slug"}).status_code == 403
     assert client.post(f"/api/v1/platform/businesses/{biz_id}/outlets", headers=headers, json={"name": "Out", "public_slug": "out-slug"}).status_code == 403
 
     # 4. Tenant Routes (without OutletMembership) -> 403 Forbidden

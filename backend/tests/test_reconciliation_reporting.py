@@ -591,7 +591,7 @@ def test_validate_rejects_production_without_explicit_url():
         validate_reconciliation_database_target(
             "production",
             database_uri="postgresql://localhost/roms",
-            explicit_database_url=None,
+            explicit_database_url="",  # Empty string ensures is_explicit=False
         )
 
 

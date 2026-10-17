@@ -4,7 +4,6 @@ import { useAuth } from '@roms/api-client';
 import {
   fetchPlatformBusinesses,
   createPlatformBusiness,
-  assignPlatformOwner,
 } from '@roms/api-client';
 import { PlatformBusiness, PlatformBusinessCreatePayload } from '@roms/shared-types';
 import { BusinessDirectory } from './BusinessDirectory';
@@ -22,15 +21,14 @@ export const BusinessDirectoryPage: React.FC = () => {
   const [isProvisionOpen, setIsProvisionOpen] = useState(false);
   const [bizForm, setBizForm] = useState<PlatformBusinessCreatePayload>({
     name: '',
-    primary_outlet_name: '',
+    owner_email: '',
+    owner_password: '',
+    owner_display_name: '',
     public_slug: '',
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
   });
-  const [ownerEmail, setOwnerEmail] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [ownerPassword, setOwnerPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [provisionError, setProvisionError] = useState<string | null>(null);
 
@@ -58,8 +56,8 @@ export const BusinessDirectoryPage: React.FC = () => {
     setProvisionError(null);
 
     const slug = bizForm.public_slug.trim();
-    if (!bizForm.name.trim() || !bizForm.primary_outlet_name.trim() || !slug) {
-      setProvisionError('Business name, primary outlet name, and public slug are required.');
+    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim() || !slug) {
+      setProvisionError('Business name, owner details, and public slug are required.');
       return;
     }
     if (!/^[a-z0-9-]+$/.test(slug)) {
@@ -70,26 +68,18 @@ export const BusinessDirectoryPage: React.FC = () => {
       setProvisionError('Business name must be between 2 and 200 characters.');
       return;
     }
-    if (
-      bizForm.primary_outlet_name.trim().length < 2 ||
-      bizForm.primary_outlet_name.trim().length > 200
-    ) {
-      setProvisionError('Primary outlet name must be between 2 and 200 characters.');
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(bizForm.owner_email.trim())) {
+      setProvisionError('Owner email is not a valid email address.');
       return;
     }
-    if (ownerEmail.trim()) {
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(ownerEmail.trim())) {
-        setProvisionError('Owner email is not a valid email address.');
-        return;
-      }
-      if (!ownerName.trim() || !ownerPassword.trim()) {
-        setProvisionError('Owner display name and password are required when provisioning an owner.');
-        return;
-      }
-      if (ownerPassword.length < 8) {
-        setProvisionError('Owner password must be at least 8 characters.');
-        return;
-      }
+    if (bizForm.owner_display_name.trim().length < 1) {
+      setProvisionError('Owner display name is required.');
+      return;
+    }
+    if (bizForm.owner_password.length < 8) {
+      setProvisionError('Owner password must be at least 8 characters.');
+      return;
     }
 
     try {
@@ -100,55 +90,23 @@ export const BusinessDirectoryPage: React.FC = () => {
           ...bizForm,
           name: bizForm.name.trim(),
           public_slug: slug,
-          primary_outlet_name: bizForm.primary_outlet_name.trim(),
         },
         token
       );
 
-      let ownerWarning: string | null = null;
-      if (ownerEmail.trim()) {
-        const primaryOutlet = created.outlets?.[0];
-        if (primaryOutlet) {
-          try {
-            await assignPlatformOwner(
-              created.id,
-              {
-                outlet_id: primaryOutlet.id,
-                email: ownerEmail.trim(),
-                password: ownerPassword,
-                display_name: ownerName.trim(),
-              },
-              token
-            );
-          } catch (ownerErr: any) {
-            ownerWarning = `Business created, but owner assignment failed: ${
-              ownerErr.message || 'unknown error'
-            }. You can assign an owner from the business detail page.`;
-          }
-        } else {
-          ownerWarning = 'Business created, but no primary outlet was returned for owner assignment.';
-        }
-      }
-
       setIsProvisionOpen(false);
       setBizForm({
         name: '',
-        primary_outlet_name: '',
+        owner_email: '',
+        owner_password: '',
+        owner_display_name: '',
         public_slug: '',
         currency: 'INR',
         timezone: 'Asia/Kolkata',
         address: '',
       });
-      setOwnerEmail('');
-      setOwnerName('');
-      setOwnerPassword('');
 
-      if (ownerWarning) {
-        setSuccessMessage(ownerWarning);
-        await loadBusinesses();
-      } else {
-        navigate(`/platform/businesses/${created.id}`);
-      }
+      navigate(`/platform/businesses/${created.id}`);
     } catch (err: any) {
       setProvisionError(err.message || 'Failed to create business.');
     } finally {
@@ -207,20 +165,6 @@ export const BusinessDirectoryPage: React.FC = () => {
                   value={bizForm.name}
                   onChange={(e) => setBizForm({ ...bizForm, name: e.target.value })}
                   placeholder="e.g. Himalayan Hospitality Pvt Ltd"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              <FormField id="biz-outlet-name" label="Primary outlet name" required>
-                <input
-                  id="biz-outlet-name"
-                  type="text"
-                  required
-                  value={bizForm.primary_outlet_name}
-                  onChange={(e) =>
-                    setBizForm({ ...bizForm, primary_outlet_name: e.target.value })
-                  }
-                  placeholder="e.g. Riverside Camp Restaurant"
                   className={opsInputClass}
                 />
               </FormField>
@@ -286,48 +230,47 @@ export const BusinessDirectoryPage: React.FC = () => {
 
               <div className="border-t border-ops-divider pt-4">
                 <div className="mb-3 text-xs font-semibold text-ops-text-secondary">
-                  Owner assignment (optional)
+                  Owner assignment (required)
                 </div>
                 <div className="space-y-3">
-                  <FormField id="owner-email" label="Owner email">
+                  <FormField id="owner-email" label="Owner email" required>
                     <input
                       id="owner-email"
                       type="email"
-                      value={ownerEmail}
-                      onChange={(e) => setOwnerEmail(e.target.value)}
+                      required
+                      value={bizForm.owner_email}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_email: e.target.value })}
                       placeholder="owner@restaurant.com"
                       className={opsInputClass}
                     />
                   </FormField>
-                  {ownerEmail.trim() && (
-                    <>
-                      <FormField id="owner-name" label="Owner display name" required>
-                        <input
-                          id="owner-name"
-                          type="text"
-                          value={ownerName}
-                          onChange={(e) => setOwnerName(e.target.value)}
-                          placeholder="Owner display name"
-                          className={opsInputClass}
-                        />
-                      </FormField>
-                      <FormField
-                        id="owner-password"
-                        label="Initial password"
-                        required
-                        hint="Minimum 8 characters."
-                      >
-                        <input
-                          id="owner-password"
-                          type="password"
-                          value={ownerPassword}
-                          onChange={(e) => setOwnerPassword(e.target.value)}
-                          placeholder="Initial password"
-                          className={opsInputClass}
-                        />
-                      </FormField>
-                    </>
-                  )}
+                  <FormField id="owner-name" label="Owner display name" required>
+                    <input
+                      id="owner-name"
+                      type="text"
+                      required
+                      value={bizForm.owner_display_name}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_display_name: e.target.value })}
+                      placeholder="Owner display name"
+                      className={opsInputClass}
+                    />
+                  </FormField>
+                  <FormField
+                    id="owner-password"
+                    label="Initial password"
+                    required
+                    hint="Minimum 8 characters."
+                  >
+                    <input
+                      id="owner-password"
+                      type="password"
+                      required
+                      value={bizForm.owner_password}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_password: e.target.value })}
+                      placeholder="Initial password"
+                      className={opsInputClass}
+                    />
+                  </FormField>
                 </div>
               </div>
 

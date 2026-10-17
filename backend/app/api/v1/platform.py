@@ -11,7 +11,7 @@ from app.api.deps import (
     _assert_platform_owner_initialized,
 )
 from app.modules.staff.models import User
-from app.modules.staff.schemas import OutletMembershipOut
+from app.modules.staff.schemas import OutletMembershipOut, BusinessMembershipOut
 from app.modules.businesses.schemas import (
     PlatformBusinessOut,
     PlatformBusinessProfileOut,
@@ -320,23 +320,23 @@ def update_subscription(
     return PlatformBusinessOut.model_validate(biz)
 
 
-@commercial_router.post("/businesses/{business_id}/assign-owner", response_model=OutletMembershipOut)
+@commercial_router.post("/businesses/{business_id}/assign-owner", response_model=BusinessMembershipOut)
 def assign_owner(
     business_id: uuid.UUID,
     data: PlatformAssignOwner,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    mem = platform_service.assign_owner_to_outlet(
+    mem = platform_service.assign_owner_to_business(
         db, business_id=business_id, data=data, actor_user_id=current_user.id
     )
-    return OutletMembershipOut(
-        outlet_id=mem.outlet.id,
-        outlet_name=mem.outlet.name,
-        public_slug=mem.outlet.public_slug,
-        business_id=mem.outlet.business_id,
-        business_name=mem.outlet.business.name if mem.outlet.business else "",
-        role=mem.role
+    return BusinessMembershipOut(
+        business_id=mem.business_id,
+        business_name=mem.business.name if mem.business else "",
+        user_id=mem.user_id,
+        role=mem.role,
+        created_at=mem.created_at,
+        updated_at=mem.updated_at,
     )
 
 

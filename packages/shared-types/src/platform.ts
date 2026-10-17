@@ -30,15 +30,13 @@ export interface PlatformBusiness {
 
 export interface PlatformBusinessCreatePayload {
   name: string;
-  primary_outlet_name: string;
+  owner_email: string;
+  owner_password: string;
+  owner_display_name: string;
   public_slug: string;
   currency?: string;
   timezone?: string;
   address?: string;
-  subscription_status?: string;
-  plan_name?: string;
-  max_outlets?: number | null;
-  trial_ends_at?: string | null;
 }
 
 export interface PlatformBusinessProfileUpdatePayload {
@@ -101,10 +99,18 @@ export interface PlatformOutletCreatePayload {
   currency?: string;
   timezone?: string;
   address?: string;
+  plan_code?: string;
+  manager?: PlatformOutletManagerPayload | null;
 }
 
 export interface PlatformAssignOwnerPayload {
-  outlet_id: string;
+  user_id?: string;
+  email?: string;
+  password?: string;
+  display_name?: string;
+}
+
+export interface PlatformOutletManagerPayload {
   user_id?: string;
   email?: string;
   password?: string;

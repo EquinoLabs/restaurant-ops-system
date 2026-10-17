@@ -31,8 +31,10 @@ def test_platform_router_permissions(client: TestClient, db_session: Session):
     assert client.get("/api/v1/platform/businesses", headers=headers).status_code == 403
     assert client.post("/api/v1/platform/businesses", headers=headers, json={
         "name": "Unauthorized Biz",
-        "primary_outlet_name": "Main",
-        "public_slug": "unauth-slug"
+        "owner_email": "u@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Unauth",
+            "public_slug": "unauth-slug"
     }).status_code == 403
 
 
@@ -62,7 +64,9 @@ def test_platform_admin_list_and_provision_business(client: TestClient, db_sessi
         headers=headers,
         json={
             "name": "Himalayan Trout House",
-            "primary_outlet_name": "Trout House Riverside",
+            "owner_email": "owner@trout.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Trout Owner",
             "public_slug": "trout-house-riverside",
             "currency": "INR",
             "timezone": "Asia/Kolkata",
@@ -72,8 +76,8 @@ def test_platform_admin_list_and_provision_business(client: TestClient, db_sessi
     assert create_resp.status_code == 200
     new_biz = create_resp.json()
     assert new_biz["name"] == "Himalayan Trout House"
-    assert len(new_biz["outlets"]) == 1
-    assert new_biz["outlets"][0]["public_slug"] == "trout-house-riverside"
+    assert len(new_biz.get("outlets", [])) == 0
+    
 
     biz_id = new_biz["id"]
 
@@ -98,7 +102,6 @@ def test_platform_admin_list_and_provision_business(client: TestClient, db_sessi
         f"/api/v1/platform/businesses/{biz_id}/assign-owner",
         headers=headers,
         json={
-            "outlet_id": express_outlet["id"],
             "email": "owner.trout@example.com",
             "password": "SecurePassword123!",
             "display_name": "Trout Owner"
@@ -107,7 +110,7 @@ def test_platform_admin_list_and_provision_business(client: TestClient, db_sessi
     assert assign_resp.status_code == 200
     mem_data = assign_resp.json()
     assert mem_data["role"] == "owner"
-    assert mem_data["public_slug"] == "trout-house-express"
+    assert "business_id" in mem_data
 
     # Verify newly created owner can log in
     owner_login = client.post(
@@ -117,7 +120,8 @@ def test_platform_admin_list_and_provision_business(client: TestClient, db_sessi
     assert owner_login.status_code == 200
 
 
-def test_duplicate_slug_validation(client: TestClient, db_session: Session):
+def test_business_creation_requires_owner_fields(client: TestClient, db_session: Session):
+    """Business creation now requires owner fields and rejects missing ones."""
     staff_user = db_session.query(User).filter(User.email == "staff@test.com").first()
     staff_user.is_platform_admin = True
     db_session.commit()
@@ -129,21 +133,17 @@ def test_duplicate_slug_validation(client: TestClient, db_session: Session):
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Attempt to create business with existing slug 'test-camp'
-    dup_resp = client.post(
+    # Missing owner fields -> 422
+    missing_resp = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
-        json={
-            "name": "Duplicate Slug Resort",
-            "primary_outlet_name": "Duplicate Outlet",
-            "public_slug": "test-camp"
-        }
+        json={"name": "Incomplete Biz"}
     )
-    assert dup_resp.status_code == 422
-    assert "already in use" in dup_resp.json()["detail"]["error"]["message"]
+    assert missing_resp.status_code == 422
 
 
 def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_session: Session):
+    """Business creation no longer accepts plan_name/max_outlets; trials are outlet-scoped."""
     staff_user = db_session.query(User).filter(User.email == "staff@test.com").first()
     staff_user.is_platform_admin = True
     db_session.commit()
@@ -155,49 +155,51 @@ def test_platform_subscription_updates_and_max_outlets(client: TestClient, db_se
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # 1. Provision a business with max_outlets=1 (field retained for backward compatibility)
+    # 1. Provision a business (no plan_name/max_outlets accepted at creation)
     create_resp = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
         json={
             "name": "Single Outlet Cafe",
-            "primary_outlet_name": "Single Outlet Main",
+            "owner_email": "so@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "SO Owner",
             "public_slug": "single-outlet-main",
-            "max_outlets": 1,
-            "plan_name": "starter"
         }
     )
     assert create_resp.status_code == 200
     biz = create_resp.json()
     biz_id = biz["id"]
+    # subscription_status defaults to 'trial' from model; plan_name/max_outlets not set at creation
     assert biz["subscription_status"] == "trial"
-    assert biz["plan_name"] == "starter"
-    assert biz["max_outlets"] == 1
+    assert biz["plan_name"] is None
 
-    # 1b. Genuinely invalid max_outlets values are still rejected at creation
+    # 1b. Plan_name/max_outlets fields are now ignored (no longer on schema) 闂備胶鍋ㄩ崕濠氬箯閿燂拷 no 422
     invalid_create_resp = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
         json={
             "name": "Invalid Cap Cafe",
-            "primary_outlet_name": "Invalid Cap Main",
+            "owner_email": "ic@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "IC Owner",
             "public_slug": "invalid-cap-main",
-            "max_outlets": 0
         }
     )
-    assert invalid_create_resp.status_code == 422
+    assert invalid_create_resp.status_code == 200
 
-    # 2. Phase 1: max_outlets cap removed -> 2nd outlet creation succeeds despite max_outlets=1
+    # 2. Create primary outlet with explicit plan 闂備胶锟借�勫�归梺璺ㄥ櫐閹凤拷 active subscription on outlet
     add_outlet_resp = client.post(
         f"/api/v1/platform/businesses/{biz_id}/outlets",
         headers=headers,
         json={
-            "name": "Single Outlet Second",
-            "public_slug": "single-outlet-second"
+            "name": "Single Outlet First",
+            "public_slug": "single-outlet-first",
+            "plan_code": "starter_pos"
         }
     )
     assert add_outlet_resp.status_code == 200
-    assert add_outlet_resp.json()["public_slug"] == "single-outlet-second"
+    assert add_outlet_resp.json()["public_slug"] == "single-outlet-first"
 
     # 3. Legacy bulk subscription update is still accepted (status/plan/max_outlets echoed)
     start_dt = utc_now()
@@ -374,7 +376,6 @@ def test_assign_owner_role_boundary(client: TestClient, db_session: Session):
         f"/api/v1/platform/businesses/{biz.id}/assign-owner",
         headers=op_headers,
         json={
-            "outlet_id": str(outlet.id),
             "email": "assigned1@example.com",
             "password": "SecurePassword123!",
             "display_name": "Assigned 1"
@@ -389,7 +390,6 @@ def test_assign_owner_role_boundary(client: TestClient, db_session: Session):
         f"/api/v1/platform/businesses/{biz.id}/assign-owner",
         headers=admin_headers,
         json={
-            "outlet_id": str(outlet.id),
             "email": "assigned2@example.com",
             "password": "SecurePassword123!",
             "display_name": "Assigned 2"
@@ -405,7 +405,6 @@ def test_assign_owner_role_boundary(client: TestClient, db_session: Session):
         f"/api/v1/platform/businesses/{biz.id}/assign-owner",
         headers=owner_headers,
         json={
-            "outlet_id": str(outlet.id),
             "email": "assigned3@example.com",
             "password": "SecurePassword123!",
             "display_name": "Assigned 3"
@@ -481,7 +480,9 @@ def test_operator_denied_business_and_outlet_creation(client: TestClient, db_ses
         headers=op_headers,
         json={
             "name": "Operator Biz Attempt",
-            "primary_outlet_name": "Op Outlet",
+            "owner_email": "op2@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Op Outlet",
             "public_slug": "op-biz-attempt",
             "currency": "INR",
             "timezone": "Asia/Kolkata",
@@ -515,7 +516,9 @@ def test_operator_denied_business_and_outlet_creation(client: TestClient, db_ses
         headers=admin_headers,
         json={
             "name": "Admin Authorized Biz",
-            "primary_outlet_name": "Admin Primary Outlet",
+            "owner_email": "admin2@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Admin Primary Outlet",
             "public_slug": "admin-authorized-biz",
             "currency": "INR",
             "timezone": "Asia/Kolkata",
@@ -539,26 +542,7 @@ def test_operator_denied_business_and_outlet_creation(client: TestClient, db_ses
     assert admin_outlet_resp.status_code == 200
 
 
-def test_assign_owner_resource_validation(client: TestClient, db_session: Session):
-    # Setup two businesses with outlets
-    biz1 = db_session.query(Business).first()
-    outlet1 = db_session.query(Outlet).filter(Outlet.business_id == biz1.id).first()
-
-    # Create second business
-    biz2 = Business(name="Second Business", status="active")
-    db_session.add(biz2)
-    db_session.flush()
-    outlet2 = Outlet(
-        business_id=biz2.id,
-        name="Second Outlet",
-        public_slug="second-outlet-val",
-        currency="INR",
-        timezone="Asia/Kolkata",
-        status="active"
-    )
-    db_session.add(outlet2)
-
-
+def test_assign_owner_business_scoped_validation(client: TestClient, db_session: Session):
     # Admin user
     admin_user = db_session.query(User).filter(User.email == "staff@test.com").first()
     admin_user.is_platform_admin = True
@@ -568,27 +552,39 @@ def test_assign_owner_resource_validation(client: TestClient, db_session: Sessio
     admin_login = client.post("/api/v1/auth/login", json={"email": "staff@test.com", "password": "password123"})
     admin_headers = {"Authorization": f"Bearer {admin_login.json()['access_token']}"}
 
-    # 1. Cross-business mismatch: supply biz1 in URL, but outlet2 (from biz2) in payload -> 404
-    cross_resp = client.post(
-        f"/api/v1/platform/businesses/{biz1.id}/assign-owner",
+    # Create a fresh business via API to ensure clean state (no existing owner)
+    create_resp = client.post("/api/v1/platform/businesses", headers=admin_headers, json={
+        "name": "Validation Biz",
+        "owner_email": "val-owner@business.com",
+        "owner_password": "Password123!",
+        "owner_display_name": "Val Owner",
+        "public_slug": f"val-biz-{uuid.uuid4().hex[:6]}"
+    })
+    assert create_resp.status_code == 200
+    biz = create_resp.json()
+    biz_id = biz["id"]
+
+    # 1. Assign owner successfully -> 200
+    assign_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/assign-owner",
         headers=admin_headers,
         json={
-            "outlet_id": str(outlet2.id),
-            "email": "cross@example.com",
+            "email": "newowner@val.com",
             "password": "Password123!",
-            "display_name": "Cross Owner"
+            "display_name": "New Owner"
         }
     )
-    assert cross_resp.status_code == 404
-    assert f"not found under business '{biz1.id}'" in cross_resp.json()["detail"]["error"]["message"]
+    assert assign_resp.status_code == 200
+    mem = assign_resp.json()
+    assert mem["role"] == "owner"
+    assert mem["business_id"] == biz_id
 
-    # 2. Non-existent business ID in URL -> 404
+    # 2. Non-existent business ID -> 404
     fake_biz_id = uuid.uuid4()
     fake_biz_resp = client.post(
         f"/api/v1/platform/businesses/{fake_biz_id}/assign-owner",
         headers=admin_headers,
         json={
-            "outlet_id": str(outlet1.id),
             "email": "fakebiz@example.com",
             "password": "Password123!",
             "display_name": "Fake Biz Owner"
@@ -597,30 +593,14 @@ def test_assign_owner_resource_validation(client: TestClient, db_session: Sessio
     assert fake_biz_resp.status_code == 404
     assert f"Business with ID '{fake_biz_id}' not found" in fake_biz_resp.json()["detail"]["error"]["message"]
 
-    # 3. Non-existent outlet ID in payload -> 404
-    fake_outlet_id = uuid.uuid4()
-    fake_outlet_resp = client.post(
-        f"/api/v1/platform/businesses/{biz1.id}/assign-owner",
-        headers=admin_headers,
-        json={
-            "outlet_id": str(fake_outlet_id),
-            "email": "fakeout@example.com",
-            "password": "Password123!",
-            "display_name": "Fake Outlet Owner"
-        }
-    )
-    assert fake_outlet_resp.status_code == 404
-    assert f"not found under business '{biz1.id}'" in fake_outlet_resp.json()["detail"]["error"]["message"]
-
-    # 4. Missing both user_id and email -> 422 Validation Error
+    # 3. Missing both user_id and email -> 422 Validation Error
     missing_user_resp = client.post(
-        f"/api/v1/platform/businesses/{biz1.id}/assign-owner",
+        f"/api/v1/platform/businesses/{biz_id}/assign-owner",
         headers=admin_headers,
-        json={
-            "outlet_id": str(outlet1.id),
-        }
+        json={}
     )
     assert missing_user_resp.status_code == 422
+
 
 
 

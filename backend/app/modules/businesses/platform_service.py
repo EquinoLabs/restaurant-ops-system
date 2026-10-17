@@ -123,95 +123,68 @@ def create_platform_business(
     db: Session, data: PlatformBusinessCreate, actor_user_id: Optional[uuid.UUID] = None
 ) -> Business:
     """
-    Provisions a new Business, its initial BusinessSubscription, and primary Outlet in a single transaction.
-    Enforces exactly 30-day trial initialization from creation timestamp.
+    Provisions a new Business and links its mandatory owner in a single transaction.
+    Per Decision 003:
+      - Mandatory owner details (email, initial password, display_name).
+      - Reuses an existing user if the email matches; rejects suspended/inactive accounts.
+      - Never creates an outlet, subscription, or trial (outlets added separately).
+      - Initial password is never logged, audited, or echoed.
     """
-    slug = data.public_slug.strip().lower()
-
-    existing_slug = db.query(Outlet).filter(Outlet.public_slug == slug).first()
-    if existing_slug:
-        raise ValidationError(f"Public slug '{slug}' is already in use by another outlet.")
-
-    if data.subscription_status and data.subscription_status not in VALID_SUBSCRIPTION_STATUSES:
-        raise ValidationError(
-            f"Invalid subscription_status '{data.subscription_status}'. Allowed: {sorted(list(VALID_SUBSCRIPTION_STATUSES))}"
-        )
-
-    if data.max_outlets is not None and data.max_outlets < 1:
-        raise ValidationError("max_outlets must be at least 1 or None.")
-
     now = utc_now()
-    sub_status = data.subscription_status or "trial"
-    trial_ends = ensure_utc(data.trial_ends_at)
-    if sub_status == "trial" and trial_ends is None:
-        trial_ends = now + timedelta(days=30)
 
+    # 1. Resolve or create owner User
+    owner_email = data.owner_email.strip().lower()
+    user = db.query(User).filter(User.email == owner_email).first()
+    created_new_user = False
+
+    if user:
+        if user.status != "active":
+            raise ValidationError(
+                f"Cannot assign inactive or suspended user '{owner_email}' as business owner."
+            )
+    else:
+        user = User(
+            email=owner_email,
+            password_hash=hash_password(data.owner_password),
+            display_name=data.owner_display_name.strip(),
+            status="active",
+            is_platform_admin=False,
+        )
+        db.add(user)
+        db.flush()
+        created_new_user = True
+
+    # 2. Create Business record (no outlet, no subscription, no trial)
     business = Business(
         name=data.name.strip(),
         status="active",
-        subscription_status=sub_status,
-        plan_name=data.plan_name,
-        max_outlets=data.max_outlets,
-        trial_ends_at=trial_ends,
+        subscription_status=None,
+        plan_name=None,
+        max_outlets=None,
+        trial_ends_at=None,
         created_at=now,
         updated_at=now,
     )
     db.add(business)
     db.flush()
 
-    # Create initial BusinessSubscription
-    if data.plan_name:
-        plan = resolve_plan(db, data.plan_name)
-    else:
-        target_code = 'starter_pos' if (data.max_outlets == 1) else 'growth_pos'
-        plan = resolve_plan(db, target_code)
-
-    if plan:
-        sub = BusinessSubscription(
-            business_id=business.id,
-            plan_id=plan.id,
-            status=business.subscription_status,
-            is_current=True,
-            trial_ends_at=business.trial_ends_at,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(sub)
-        db.flush()
-
-    primary_outlet = Outlet(
+    # 3. Create BusinessMembership(role="owner")
+    biz_membership = BusinessMembership(
         business_id=business.id,
-        name=data.primary_outlet_name.strip(),
-        public_slug=slug,
-        currency=data.currency,
-        timezone=data.timezone,
-        address=data.address.strip() if data.address else None,
-        status="active",
+        user_id=user.id,
+        role="owner",
         created_at=now,
         updated_at=now,
     )
-    db.add(primary_outlet)
+    db.add(biz_membership)
     db.flush()
 
-    if plan:
-        primary_sub = OutletSubscription(
-            outlet_id=primary_outlet.id,
-            business_id=business.id,
-            plan_id=plan.id,
-            status=business.subscription_status,
-            is_current=True,
-            trial_ends_at=business.trial_ends_at,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(primary_sub)
-        db.flush()
-
+    # 4. Audit platform.business.create 閳ワ拷 no password, no outlet/subscription metadata
     try:
         log_audit(
             db=db,
             business_id=business.id,
-            outlet_id=primary_outlet.id,
+            outlet_id=None,
             actor_user_id=actor_user_id,
             action="platform.business.create",
             entity_type="business",
@@ -219,13 +192,10 @@ def create_platform_business(
             metadata_json={
                 "outcome": "success",
                 "name": business.name,
-                "primary_outlet_name": primary_outlet.name,
-                "public_slug": primary_outlet.public_slug,
-                "subscription_status": business.subscription_status,
-                "plan_name": business.plan_name,
-                "max_outlets": business.max_outlets,
-                "trial_ends_at": business.trial_ends_at.isoformat() if business.trial_ends_at else None,
-            }
+                "owner_user_id": str(user.id),
+                "owner_email": user.email,
+                "created_new_user": created_new_user,
+            },
         )
         db.commit()
     except Exception:
@@ -749,7 +719,18 @@ def add_outlet_to_business(
 
     now = utc_now()
 
-    default_plan = resolve_plan(db, "starter_pos")
+    # Resolve and validate the requested plan (backend must validate, never trust frontend default).
+    # The "trial" sentinel is the approved UI default: it creates a 30-day trial subscription
+    # on the starter_pos plan. Any other value must be a canonical active plan code, which
+    # creates an active subscription for that plan instead (Decision 002).
+    if data.plan_code == "trial":
+        plan = resolve_plan(db, "starter_pos")
+        sub_status = "trial"
+        trial_ends = now + timedelta(days=30)
+    else:
+        plan = resolve_plan(db, data.plan_code)
+        sub_status = "active"
+        trial_ends = None
 
     outlet = Outlet(
         business_id=business_id,
@@ -765,13 +746,12 @@ def add_outlet_to_business(
     db.add(outlet)
     db.flush()
 
-    # Initialize independent 30-day trial subscription for newly created outlet
-    trial_ends = now + timedelta(days=30)
+    # Independent per-outlet subscription 閳ワ拷 never inherits a sibling's subscription.
     outlet_sub = OutletSubscription(
         outlet_id=outlet.id,
         business_id=business_id,
-        plan_id=default_plan.id,
-        status="trial",
+        plan_id=plan.id,
+        status=sub_status,
         is_current=True,
         trial_ends_at=trial_ends,
         created_at=now,
@@ -793,6 +773,44 @@ def add_outlet_to_business(
         if not existing_m:
             db.add(OutletMembership(user_id=owner.user_id, outlet_id=outlet.id, role="owner"))
 
+    # Optional manager assignment (S3): assign manager role on the new outlet
+    if data.manager is not None:
+        manager_user: Optional[User] = None
+        if data.manager.user_id is not None:
+            manager_user = db.query(User).filter(User.id == data.manager.user_id).first()
+            if not manager_user:
+                raise NotFoundError(f"User with ID '{data.manager.user_id}' not found.")
+        elif data.manager.email is not None:
+            mgr_email = data.manager.email.strip().lower()
+            manager_user = db.query(User).filter(User.email == mgr_email).first()
+            if not manager_user:
+                if not data.manager.password or not data.manager.display_name:
+                    raise ValidationError("password and display_name are required when creating a new manager user.")
+                manager_user = User(
+                    email=mgr_email,
+                    password_hash=hash_password(data.manager.password),
+                    display_name=data.manager.display_name.strip(),
+                    status="active",
+                    is_platform_admin=False,
+                )
+                db.add(manager_user)
+                db.flush()
+
+        if manager_user:
+            existing_mgr = db.query(OutletMembership).filter(
+                OutletMembership.user_id == manager_user.id,
+                OutletMembership.outlet_id == outlet.id
+            ).first()
+            if existing_mgr:
+                existing_mgr.role = "manager"
+                existing_mgr.updated_at = utc_now()
+            else:
+                db.add(OutletMembership(
+                    user_id=manager_user.id,
+                    outlet_id=outlet.id,
+                    role="manager",
+                ))
+
     log_audit(
         db=db,
         business_id=business_id,
@@ -807,6 +825,9 @@ def add_outlet_to_business(
             "public_slug": outlet.public_slug,
             "currency": outlet.currency,
             "timezone": outlet.timezone,
+            "plan_code": plan.code,
+            "subscription_status": sub_status,
+            "trial_ends_at": trial_ends.isoformat() if trial_ends else None,
         }
     )
 
@@ -815,23 +836,16 @@ def add_outlet_to_business(
     return outlet
 
 
-def assign_owner_to_outlet(
+def assign_owner_to_business(
     db: Session, business_id: uuid.UUID, data: PlatformAssignOwner, actor_user_id: Optional[uuid.UUID] = None
-) -> OutletMembership:
+) -> BusinessMembership:
     """
-    Creates or assigns a User as an 'owner' for a specific Outlet under a Business.
+    Creates or assigns a User as an 'owner' for a Business (not tied to any specific outlet).
+    Per Decision 003: exactly-one-owner invariant enforced at service layer.
     """
     biz = db.query(Business).filter(Business.id == business_id).first()
     if not biz:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
-
-    outlet = db.query(Outlet).filter(
-        Outlet.id == data.outlet_id,
-        Outlet.business_id == business_id
-    ).first()
-    if not outlet:
-        raise NotFoundError(f"Outlet with ID '{data.outlet_id}' not found under business '{business_id}'.")
-
 
     user: Optional[User] = None
     created_new_user = False
@@ -859,30 +873,31 @@ def assign_owner_to_outlet(
     else:
         raise ValidationError("Either user_id or email must be provided to assign an owner.")
 
-    membership = db.query(OutletMembership).filter(
-        OutletMembership.user_id == user.id,
-        OutletMembership.outlet_id == outlet.id
+    # Exactly-one-owner invariant: demote existing owner to manager before promoting new one
+    existing_owner = db.query(BusinessMembership).filter(
+        BusinessMembership.business_id == business_id,
+        BusinessMembership.role == "owner"
     ).first()
+    if existing_owner and existing_owner.user_id != user.id:
+        existing_owner.role = "manager"
+        existing_owner.updated_at = utc_now()
 
-    if membership:
-        membership.role = "owner"
-    else:
-        membership = OutletMembership(
-            user_id=user.id,
-            outlet_id=outlet.id,
-            role="owner"
-        )
-        db.add(membership)
-
+    # Create or update business membership
     biz_membership = db.query(BusinessMembership).filter(
         BusinessMembership.user_id == user.id,
         BusinessMembership.business_id == business_id
     ).first()
-    if not biz_membership:
+
+    if biz_membership:
+        biz_membership.role = "owner"
+        biz_membership.updated_at = utc_now()
+    else:
         biz_membership = BusinessMembership(
             user_id=user.id,
             business_id=business_id,
-            role="owner"
+            role="owner",
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         db.add(biz_membership)
 
@@ -891,11 +906,11 @@ def assign_owner_to_outlet(
     log_audit(
         db=db,
         business_id=business_id,
-        outlet_id=outlet.id,
+        outlet_id=None,
         actor_user_id=actor_user_id,
-        action="platform.owner.assign",
+        action="platform.business_owner.assign",
         entity_type="membership",
-        entity_id=membership.id,
+        entity_id=biz_membership.id,
         metadata_json={
             "outcome": "success",
             "assigned_user_id": str(user.id),
@@ -906,8 +921,8 @@ def assign_owner_to_outlet(
     )
 
     db.commit()
-    db.refresh(membership)
-    return membership
+    db.refresh(biz_membership)
+    return biz_membership
 
 
 def list_platform_admins(db: Session) -> List[User]:

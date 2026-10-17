@@ -52,34 +52,36 @@ class PlatformBusinessOut(PlatformBusinessProfileOut):
 
 class PlatformBusinessCreate(BaseModel):
     name: str
-    primary_outlet_name: str
-    public_slug: str
-    currency: str = "INR"
-    timezone: str = "Asia/Kolkata"
-    address: Optional[str] = None
-    subscription_status: Optional[str] = "trial"
-    plan_name: Optional[str] = None
-    max_outlets: Optional[int] = None
-    trial_ends_at: Optional[datetime] = None
+    owner_email: EmailStr = Field(..., description="Owner email (required at business creation)")
+    owner_password: str = Field(..., min_length=8, description="Initial owner password set by platform admin")
+    owner_display_name: str = Field(..., min_length=1, max_length=150, description="Owner display name")
 
-    @field_validator("trial_ends_at", mode="before")
+    @field_validator("name")
     @classmethod
-    def validate_utc_datetime(cls, v):
-        if v is None:
-            return None
-        if isinstance(v, str):
-            try:
-                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
-            except ValueError as e:
-                raise ValueError(f"Invalid ISO datetime string: {v}") from e
-        elif isinstance(v, datetime):
-            dt = v
-        else:
-            raise ValueError("Expected datetime string or datetime object.")
+    def validate_name(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("Business name cannot be empty or whitespace only.")
+        if len(clean) < 2:
+            raise ValueError("Business name must be at least 2 characters.")
+        if len(clean) > 200:
+            raise ValueError("Business name must be at most 200 characters.")
+        return clean
 
-        if dt.tzinfo is None:
-            raise ValueError("Datetime must be timezone-aware (UTC). Ambiguous naive datetimes are rejected.")
-        return dt.astimezone(timezone.utc)
+    @field_validator("owner_password")
+    @classmethod
+    def validate_owner_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError("Owner password must be at least 8 characters.")
+        return v
+
+    @field_validator("owner_display_name")
+    @classmethod
+    def validate_owner_display_name(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean:
+            raise ValueError("Owner display name cannot be empty.")
+        return clean
 
 
 class PlatformSubscriptionUpdate(BaseModel):
@@ -114,20 +116,73 @@ class PlatformSubscriptionUpdate(BaseModel):
         return dt.astimezone(timezone.utc)
 
 
+class PlatformOutletManagerPayload(BaseModel):
+    """Optional manager assignment on outlet creation."""
+    user_id: Optional[uuid.UUID] = None
+    email: Optional[EmailStr] = None
+    password: Optional[str] = Field(default=None, min_length=8)
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=150)
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_modes(self):
+        is_existing_mode = self.user_id is not None
+        has_new_fields = (
+            (self.email is not None)
+            or (self.password is not None)
+            or (self.display_name is not None)
+        )
+        if is_existing_mode and has_new_fields:
+            raise ValueError(
+                "Ambiguous manager request: specify either 'user_id' for existing-user assignment "
+                "OR ('email', 'password', 'display_name') for new-user creation, not both."
+            )
+        if is_existing_mode:
+            return self
+        if has_new_fields:
+            if not (self.email and self.password and self.display_name):
+                raise ValueError(
+                    "Incomplete manager request: new-user creation requires 'email', 'password', "
+                    "and 'display_name'. Alternatively, supply 'user_id' to assign an existing user."
+                )
+        # If no fields provided, this is an unset/empty payload — allowed
+        return self
+
+
 class PlatformOutletCreate(BaseModel):
     name: str
     public_slug: str
     currency: str = "INR"
     timezone: str = "Asia/Kolkata"
     address: Optional[str] = None
+    plan_code: str = "trial"
+    manager: Optional[PlatformOutletManagerPayload] = None
 
 
 class PlatformAssignOwner(BaseModel):
-    outlet_id: uuid.UUID
+    """Business-scoped owner assignment. No outlet_id — owner applies to all outlets."""
     user_id: Optional[uuid.UUID] = None
     email: Optional[EmailStr] = None
     password: Optional[str] = None
     display_name: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_mutually_exclusive_modes(self):
+        is_existing_mode = self.user_id is not None
+        has_new_fields = (
+            (self.email is not None)
+            or (self.password is not None)
+            or (self.display_name is not None)
+        )
+        if is_existing_mode and has_new_fields:
+            raise ValueError(
+                "Ambiguous request: specify either 'user_id' for existing-user assignment "
+                "OR ('email', 'password', 'display_name') for new-user creation, not both."
+            )
+        if not is_existing_mode and not has_new_fields:
+            raise ValueError(
+                "Incomplete request: either 'user_id' or ('email', 'password', 'display_name') required."
+            )
+        return self
 
 
 class PlatformOwnerTransferRequest(BaseModel):
@@ -196,6 +251,7 @@ class PlatformAdminUserOut(BaseModel):
 
 class PlatformBusinessProfileUpdate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200, description="Business legal/display name")
+    status: Optional[str] = Field(default=None, description="Operational status: 'active' or 'suspended'")
 
     @field_validator("name")
     @classmethod
@@ -203,6 +259,16 @@ class PlatformBusinessProfileUpdate(BaseModel):
         clean = v.strip()
         if not clean:
             raise ValueError("Business name cannot be empty or whitespace only.")
+        return clean
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        clean = v.strip().lower()
+        if clean not in ("active", "suspended"):
+            raise ValueError(f"Invalid status '{clean}'. Allowed: ['active', 'suspended']")
         return clean
 
 

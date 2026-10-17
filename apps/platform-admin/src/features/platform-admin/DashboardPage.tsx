@@ -18,7 +18,9 @@ export const DashboardPage: React.FC = () => {
   const [isProvisionOpen, setIsProvisionOpen] = useState(false);
   const [bizForm, setBizForm] = useState<PlatformBusinessCreatePayload>({
     name: '',
-    primary_outlet_name: '',
+    owner_email: '',
+    owner_password: '',
+    owner_display_name: '',
     public_slug: '',
     currency: 'INR',
     timezone: 'Asia/Kolkata',
@@ -54,8 +56,8 @@ export const DashboardPage: React.FC = () => {
     if (!token) return;
     setProvisionError(null);
     const slug = bizForm.public_slug.trim();
-    if (!bizForm.name.trim() || !bizForm.primary_outlet_name.trim() || !slug) {
-      setProvisionError('Business name, primary outlet name, and public slug are required.');
+    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim() || !slug) {
+      setProvisionError('Business name, owner details, and public slug are required.');
       return;
     }
     if (!/^[a-z0-9-]+$/.test(slug)) {
@@ -69,12 +71,11 @@ export const DashboardPage: React.FC = () => {
           ...bizForm,
           name: bizForm.name.trim(),
           public_slug: slug,
-          primary_outlet_name: bizForm.primary_outlet_name.trim(),
         },
         token
       );
       setIsProvisionOpen(false);
-      setBizForm({ name: '', primary_outlet_name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
+      setBizForm({ name: '', owner_email: '', owner_password: '', owner_display_name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
       navigate(`/platform/businesses/${created.id}`);
     } catch (err: any) {
       setProvisionError(err.message || 'Failed to create business.');
@@ -139,20 +140,6 @@ export const DashboardPage: React.FC = () => {
                 />
               </FormField>
 
-              <FormField id="dash-outlet-name" label="Primary outlet name" required>
-                <input
-                  id="dash-outlet-name"
-                  type="text"
-                  required
-                  value={bizForm.primary_outlet_name}
-                  onChange={(e) =>
-                    setBizForm({ ...bizForm, primary_outlet_name: e.target.value })
-                  }
-                  placeholder="e.g. Riverside Camp Restaurant"
-                  className={opsInputClass}
-                />
-              </FormField>
-
               <FormField
                 id="dash-slug"
                 label="Public slug"
@@ -209,6 +196,52 @@ export const DashboardPage: React.FC = () => {
                   className={opsInputClass}
                 />
               </FormField>
+
+              <div className="border-t border-ops-divider pt-4">
+                <div className="mb-3 text-xs font-semibold text-ops-text-secondary">
+                  Owner assignment (required)
+                </div>
+                <div className="space-y-3">
+                  <FormField id="dash-owner-email" label="Owner email" required>
+                    <input
+                      id="dash-owner-email"
+                      type="email"
+                      required
+                      value={bizForm.owner_email}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_email: e.target.value })}
+                      placeholder="owner@restaurant.com"
+                      className={opsInputClass}
+                    />
+                  </FormField>
+                  <FormField id="dash-owner-name" label="Owner display name" required>
+                    <input
+                      id="dash-owner-name"
+                      type="text"
+                      required
+                      value={bizForm.owner_display_name}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_display_name: e.target.value })}
+                      placeholder="Owner display name"
+                      className={opsInputClass}
+                    />
+                  </FormField>
+                  <FormField
+                    id="dash-owner-password"
+                    label="Initial password"
+                    required
+                    hint="Minimum 8 characters."
+                  >
+                    <input
+                      id="dash-owner-password"
+                      type="password"
+                      required
+                      value={bizForm.owner_password}
+                      onChange={(e) => setBizForm({ ...bizForm, owner_password: e.target.value })}
+                      placeholder="Initial password"
+                      className={opsInputClass}
+                    />
+                  </FormField>
+                </div>
+              </div>
 
               {provisionError && (
                 <p role="alert" className="text-xs text-ops-error">

@@ -112,13 +112,13 @@ export const BusinessDetailPage: React.FC = () => {
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
+    plan_code: 'trial',
   });
   const [outletSaving, setOutletSaving] = useState(false);
   const [outletError, setOutletError] = useState<string | null>(null);
 
   const [ownerTarget, setOwnerTarget] = useState<{ businessId: string; outletId: string; outletName: string } | null>(null);
   const [ownerForm, setOwnerForm] = useState<PlatformAssignOwnerPayload>({
-    outlet_id: '',
     email: '',
     password: '',
     display_name: '',
@@ -224,7 +224,7 @@ export const BusinessDetailPage: React.FC = () => {
         public_slug: outletForm.public_slug.trim(),
       }, token);
       setIsAddOutletOpen(false);
-      setOutletForm({ name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
+      setOutletForm({ name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '', plan_code: 'trial' });
       navigate(`/platform/outlets/${created.id}`);
     } catch (err: any) {
       setOutletError(err.message || 'Failed to create outlet.');
@@ -243,10 +243,7 @@ export const BusinessDetailPage: React.FC = () => {
     try {
       setOwnerSaving(true);
       setOwnerError(null);
-      await assignPlatformOwner(ownerTarget.businessId, {
-        ...ownerForm,
-        outlet_id: ownerTarget.outletId,
-      }, token);
+      await assignPlatformOwner(ownerTarget.businessId, ownerForm, token);
       setOwnerSuccess(`Owner user '${ownerForm.email}' assigned to outlet '${ownerTarget.outletName}'.`);
       setOwnerTarget(null);
       setOwnerForm({ outlet_id: '', email: '', password: '', display_name: '' });
@@ -792,6 +789,21 @@ export const BusinessDetailPage: React.FC = () => {
                   placeholder="e.g. hillside-dhaba"
                   className={`${opsInputClass} font-mono`}
                 />
+              </FormField>
+
+              <FormField id="outlet-plan" label="Plan" required>
+                <select
+                  value={outletForm.plan_code ?? 'trial'}
+                  onChange={(e) => setOutletForm({ ...outletForm, plan_code: e.target.value })}
+                  className={opsInputClass}
+                >
+                  <option value="trial">Trial — 30-day trial on Starter POS</option>
+                  <option value="starter_pos">Starter POS — active subscription</option>
+                  <option value="growth_pos">Growth POS — active subscription</option>
+                  <option value="pro_kds">Pro KDS — active subscription</option>
+                  <option value="enterprise">Enterprise — active subscription</option>
+                  <option value="free_qr">Free QR Menu — non-expiring</option>
+                </select>
               </FormField>
 
               {outletError && (

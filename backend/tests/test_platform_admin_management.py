@@ -400,7 +400,9 @@ def test_revoke_modern_admin_clears_role_and_denies_commercial_access(client: Te
     assert client.get("/api/v1/platform/admins", headers=admin_headers).status_code == 403
     assert client.post("/api/v1/platform/businesses", headers=admin_headers, json={
         "name": "Revoked Biz Attempt",
-        "primary_outlet_name": "Main",
+        "owner_email": "mgmt@example.com",
+        "owner_password": "Password123!",
+        "owner_display_name": "Mgmt Owner",
         "public_slug": "revoked-biz-attempt"
     }).status_code == 403
 

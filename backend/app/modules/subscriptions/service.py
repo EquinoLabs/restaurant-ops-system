@@ -86,6 +86,10 @@ class EntitlementService:
             if getattr(subscription, "cancel_at_period_end", False):
                 if current_period_end is not None and now >= current_period_end:
                     return "cancelled"
+            # Special-case free_qr plans: non-expiring when no current_period_end
+            plan_code = getattr(getattr(subscription, "plan", None), "code", None)
+            if plan_code == "free_qr" and current_period_end is None:
+                return status
             if current_period_end is None or now >= current_period_end:
                 return "expired"
             return status

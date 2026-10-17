@@ -27,7 +27,9 @@ def test_business_creation_audit_log(client: TestClient, db_session: Session):
         headers=headers,
         json={
             "name": "Audit Test Bistro",
-            "primary_outlet_name": "Audit Main",
+            "owner_email": "audit@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Audit Owner",
             "public_slug": "audit-bistro-main",
             "currency": "INR",
             "timezone": "Asia/Kolkata",
@@ -49,12 +51,10 @@ def test_business_creation_audit_log(client: TestClient, db_session: Session):
     assert log.actor_user_id == admin.id
     assert log.entity_type == "business"
     assert log.entity_id == biz_id
-    assert log.outlet_id is not None
+    assert log.outlet_id is None
     assert log.metadata_json["outcome"] == "success"
     assert log.metadata_json["name"] == "Audit Test Bistro"
-    assert log.metadata_json["public_slug"] == "audit-bistro-main"
-    assert log.metadata_json["plan_name"] == "Pro Plan"
-    assert log.metadata_json["max_outlets"] == 3
+    assert log.metadata_json["owner_email"] == "audit@example.com"
 
 
 def test_subscription_and_status_changes_audit_log(client: TestClient, db_session: Session):
@@ -179,13 +179,14 @@ def test_outlet_creation_and_owner_assignment_audit_log(client: TestClient, db_s
     assert assign_resp.status_code == 200
 
     log_owner = db_session.query(AuditLog).filter(
-        AuditLog.action == "platform.owner.assign",
-        AuditLog.outlet_id == new_outlet_id
+        AuditLog.action == "platform.business_owner.assign",
+        AuditLog.business_id == biz.id
     ).first()
 
     assert log_owner is not None
     assert log_owner.actor_user_id == admin.id
     assert log_owner.business_id == biz.id
+    assert log_owner.outlet_id is None
     assert log_owner.metadata_json["email"] == "newowner@test.com"
     assert log_owner.metadata_json["created_new_user"] is True
 
@@ -208,16 +209,16 @@ def test_failed_operation_rollback_leaves_no_audit_log(client: TestClient, db_se
     token = login_resp.json()["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    # Attempt to create business with duplicate slug 'test-camp'
+    # Attempt to create business with short name (min 2 chars validation)
     fail_resp = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
         json={
-            "name": "Duplicate Slug Biz",
-            "primary_outlet_name": "Duplicate Outlet",
-            "public_slug": "test-camp",  # Already exists!
-            "currency": "INR",
-            "timezone": "Asia/Kolkata"
+            "name": "X",
+            "owner_email": "dup2@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Dup2 Owner",
+            "public_slug": f"dup2-{uuid.uuid4().hex[:6]}"
         }
     )
     assert fail_resp.status_code == 422
@@ -247,7 +248,9 @@ def test_non_platform_user_denied_creates_no_audit_log(client: TestClient, db_se
         headers=headers,
         json={
             "name": "Hacker Biz",
-            "primary_outlet_name": "Hacker Outlet",
+            "owner_email": "hacker@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Hacker Owner",
             "public_slug": "hacker-slug"
         }
     )
