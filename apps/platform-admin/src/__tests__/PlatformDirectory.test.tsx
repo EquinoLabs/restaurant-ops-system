@@ -376,18 +376,18 @@ describe('OutletDetailDrawer Component', () => {
     expect(screen.getByText('Name locked')).toBeDefined();
   });
 
-  it('allows Operator to edit outlet profile successfully', async () => {
+  it('allows Admin to edit outlet profile successfully', async () => {
     vi.spyOn(authContext, 'useAuth').mockReturnValue({
       user: {
-        id: 'u-op',
-        email: 'operator@platform.com',
-        display_name: 'Platform Operator',
+        id: 'u-admin',
+        email: 'admin@platform.com',
+        display_name: 'Platform Admin',
         status: 'active',
-        is_platform_admin: false,
-        platform_role: 'operator',
+        is_platform_admin: true,
+        platform_role: 'admin',
         outlets: [],
       },
-      token: 'op-token',
+      token: 'admin-token',
       login: vi.fn(),
       logout: vi.fn(),
       isAuthenticated: true,
@@ -438,7 +438,7 @@ describe('OutletDetailDrawer Component', () => {
           name: 'Hilltop Grand Branch',
           address: 'New Valley Road',
         }),
-        'op-token'
+        'admin-token'
       );
       expect(screen.getByText("Outlet 'Hilltop Grand Branch' profile updated successfully.")).toBeDefined();
       expect(screen.getByText('Hilltop Grand Branch')).toBeDefined();
@@ -446,7 +446,40 @@ describe('OutletDetailDrawer Component', () => {
     });
   });
 
-  it('validates outlet profile inputs before submitting', async () => {
+  it('allows Owner to open outlet profile editing controls', () => {
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-owner',
+        email: 'owner@platform.com',
+        display_name: 'Platform Owner',
+        status: 'active',
+        is_platform_admin: true,
+        platform_role: 'owner',
+        outlets: [],
+      },
+      token: 'owner-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    const editOutletBtn = screen.getByLabelText('Edit Profile for Hilltop Branch');
+    fireEvent.click(editOutletBtn);
+
+    expect(screen.getByText('Edit Outlet Profile')).toBeDefined();
+    expect(screen.getByLabelText('Outlet Name Input')).toBeDefined();
+  });
+
+  it('lets Operator view outlet details but hides outlet profile editing controls', () => {
     vi.spyOn(authContext, 'useAuth').mockReturnValue({
       user: {
         id: 'u-op',
@@ -458,6 +491,56 @@ describe('OutletDetailDrawer Component', () => {
         outlets: [],
       },
       token: 'op-token',
+      login: vi.fn(),
+      logout: vi.fn(),
+      isAuthenticated: true,
+      loading: false,
+    });
+
+    // Spies persist across tests in this file; reset history so this assertion
+    // covers only interactions produced by this test.
+    const outletProfileSpy = vi.spyOn(apiClient, 'updatePlatformOutletProfile');
+    outletProfileSpy.mockClear();
+
+    render(
+      <OutletDetailDrawer
+        business={sampleBusiness}
+        isOpen={true}
+        onClose={vi.fn()}
+      />
+    );
+
+    // Operator retains full read access to outlet details
+    expect(screen.getByText('Hilltop Branch')).toBeDefined();
+    expect(screen.getByText('Hilltop Rd')).toBeDefined();
+    expect(screen.getByText('/m/hilltop-branch')).toBeDefined();
+    expect(screen.getByText('Currency')).toBeDefined();
+    expect(screen.getByText('Timezone')).toBeDefined();
+
+    // No outlet-profile editing control is offered to Operators
+    expect(screen.queryByLabelText('Edit Profile for Hilltop Branch')).toBeNull();
+    expect(screen.getByText('Profile locked')).toBeDefined();
+
+    // Editing modal can never be activated
+    expect(screen.queryByText('Edit Outlet Profile')).toBeNull();
+    expect(screen.queryByLabelText('Outlet Name Input')).toBeNull();
+    expect(outletProfileSpy).not.toHaveBeenCalled();
+  });
+
+  it('validates outlet profile inputs before submitting', async () => {
+    // Validation runs in the edit modal, which is offered to Owner/Admin only
+    // (Owner Decision 004); exercised with an Admin caller.
+    vi.spyOn(authContext, 'useAuth').mockReturnValue({
+      user: {
+        id: 'u-admin',
+        email: 'admin@platform.com',
+        display_name: 'Platform Admin',
+        status: 'active',
+        is_platform_admin: true,
+        platform_role: 'admin',
+        outlets: [],
+      },
+      token: 'admin-token',
       login: vi.fn(),
       logout: vi.fn(),
       isAuthenticated: true,
@@ -494,17 +577,19 @@ describe('OutletDetailDrawer Component', () => {
   });
 
   it('displays error message when outlet update fails', async () => {
+    // Save-path error handling runs in the edit modal, which is offered to
+    // Owner/Admin only (Owner Decision 004); exercised with an Admin caller.
     vi.spyOn(authContext, 'useAuth').mockReturnValue({
       user: {
-        id: 'u-op',
-        email: 'operator@platform.com',
-        display_name: 'Platform Operator',
+        id: 'u-admin',
+        email: 'admin@platform.com',
+        display_name: 'Platform Admin',
         status: 'active',
-        is_platform_admin: false,
-        platform_role: 'operator',
+        is_platform_admin: true,
+        platform_role: 'admin',
         outlets: [],
       },
-      token: 'op-token',
+      token: 'admin-token',
       login: vi.fn(),
       logout: vi.fn(),
       isAuthenticated: true,
@@ -625,6 +710,7 @@ describe('OutletDetailDrawer Component', () => {
     expect(screen.queryByText('Plan Tier')).toBeNull();
     expect(screen.queryByText('Outlet Capacity')).toBeNull();
     expect(screen.queryByText('Trial Status')).toBeNull();
+    expect(screen.queryByLabelText('Edit Profile for Hilltop Branch')).toBeNull();
 
     // 2. Invalid role
     vi.spyOn(authContext, 'useAuth').mockReturnValue({
@@ -655,5 +741,6 @@ describe('OutletDetailDrawer Component', () => {
     expect(screen.queryByText('Plan Tier')).toBeNull();
     expect(screen.queryByText('Outlet Capacity')).toBeNull();
     expect(screen.queryByText('Trial Status')).toBeNull();
+    expect(screen.queryByLabelText('Edit Profile for Hilltop Branch')).toBeNull();
   });
 });

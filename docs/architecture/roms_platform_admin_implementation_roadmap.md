@@ -4,6 +4,9 @@
 > **Implementation Roadmap & Phased Execution Plan (Final Approved Policy Revision)**  
 > This roadmap defines the phased rollout schedule, minimum table scope, acceptance criteria, testing strategies, and approval gates for implementing subscription controls, entitlement resolution, and platform administration capabilities in ROMS.
 
+> [!NOTE]
+> **Stage 3 Alignment (2026-10-17)** — Phase B was implemented and shipped using the **`outlet_subscriptions`** table (migration `0010`), not the `business_subscriptions` table named in the original Phase B scope below; the Phase B text is retained for history with an inline annotation. A new **Stage 3 planned implementation section** has been added between Phase E and Phase F for ownership, outlet-scoped subscription corrections, and strict read-only Operators (Owner Decisions 002–004, authoritative reference `docs/architecture/stage_3_ownership_subscriptions_architecture.md`). **All Stage 3 steps are planned only and require separate owner authorization**; this documentation task implements nothing.
+
 ---
 
 ## Roadmap Overview & Staged Rollout Flow
@@ -39,7 +42,7 @@ Implement ONLY the minimum 5 database tables and backend resolution engine (`Ent
 1. `plans`: Catalog of base subscription packages.
 2. `features`: Catalog of stable feature codes (`menu.digital`, `ordering.customer`, `ordering.staff`, `kds.enabled`, `outlets.max_count`, `payments.online`, `notifications.whatsapp`).
 3. `plan_features`: Mapping of features and numeric limits to plans (`limit_value = NULL` represents explicit unlimited quantity for an included feature).
-4. `business_subscriptions`: Authoritative current subscription and historical period log (`is_current = True` partial index).
+4. `business_subscriptions`: Authoritative current subscription and historical period log (`is_current = True` partial index). *(`[Shipped]` Implemented as **`outlet_subscriptions`** keyed by `outlet_id` in migration `0010`, per Owner Decision 002 — outlet-scoped subscriptions. The partial unique index `uq_business_current_subscription` shipped on the subscription table; ORM model metadata parity for the index is still missing and is planned as a model-only change.)*
 5. `entitlement_overrides`: Audited administrative grants and restrictions (`limit_value = NULL` on grant overrides falls through to legacy scalar/plan limit).
 
 **Explicit Exclusions in Phase B**:
@@ -48,6 +51,7 @@ Implement ONLY the minimum 5 database tables and backend resolution engine (`Ent
 - Automated payment gateway processing (Out of scope).
 
 ### Database Migration & Atomic Rollback Policy (`0010_subscription_entitlements_schema.py`)
+> `[Shipped]` Migration `0010` has been applied. It created `outlet_subscriptions` (not `business_subscriptions`) plus `plans`, `features`, `plan_features`, `entitlement_overrides`, and the partial unique index on the subscription table's current row. The description below is the historical Phase B plan.
 - **Schema Creation**:
   - Creates the 5 core tables (`plans`, `features`, `plan_features`, `business_subscriptions`, `entitlement_overrides`).
   - Defines PostgreSQL partial unique index `uq_business_current_subscription` on `business_subscriptions(business_id) WHERE is_current = TRUE`.
@@ -89,6 +93,34 @@ Enforce backend route guards across all remaining operational routes and provide
 
 ### Objective & Scope
 Enhance onboarding workflows, business detail views (7-tab structure: Overview, Outlets, Menu Support, Subscription, Effective Features, Billing History, Audit Activity), and authorized read-only menu support access.
+
+---
+
+## Phase E3 (Stage 3) — Ownership, Outlet-Scoped Subscriptions & Read-Only Operators `[PLANNED — REQUIRES SEPARATE AUTHORIZATION]`
+
+> **Status:** Planned only. No Stage 3 application code, migrations, or tests have been implemented. Sequencing below follows `docs/architecture/stage_3_ownership_subscriptions_architecture.md` (Owner Decisions 002–004). Documentation updates are complete; implementation must be separately approved and authorized.
+
+### Objective & Scope
+Implement the approved Stage 3 product decisions: one-owner-per-business with audited transfer, business creation with mandatory owner details and no automatic outlet/subscription, outlet creation with required plan selection (Trial default), independent outlet subscription management (no propagation), and strict read-only Platform Operators with backend enforcement and redacted audit access.
+
+### Planned Implementation Sequencing
+1. **S1 — Ownership foundation (backend + model):** `BusinessMembership` ownership model; exactly-one-owner invariant; transfer service (demote previous owner to manager, `platform.business_owner.transfer`); owner-access-to-all-outlets synthesis preserved (`role="owner"` membership); inactive/suspended target rejection. Audit actions: `platform.business_owner.transfer`, `platform.business_manager.assign`/`revoke`.
+2. **S2 — Business creation (backend + portal):** mandatory owner details; administrator-set initial owner password (never logged/audited/echoed); remove automatic primary-outlet and automatic-trial provisioning; no first-login password-change flow; reuse existing users; audit action `platform.business.create` retained.
+3. **S3 — Outlet creation (backend + portal):** required plan selection with Trial default (30-day duration preserved); optional manager assignment (owner-as-responsible stores owner role); `free_qr` selectable; audit actions `platform.outlet.create`, `platform.subscription.create`.
+4. **S4 — Subscription management (backend + portal):** outlet-scoped subscription mutation only; **delete** business-level subscription propagation (`_propagate_subscription_to_outlets`); `free_qr` non-expiring resolver semantics (no schema change); document and gate the legacy fallback path for removal; `platform.subscription.update`/`cancel` per outlet.
+5. **S5 — Operator read-only enforcement (backend):** split router guards so Operators can read Overview/Businesses/details/Subscriptions/Plans/Audit Logs; remove Operator write access everywhere (including the outlet-profile `PATCH` reachable via the profile router and platform menu writes); redacted audit serializer for Operators (minimum necessary fields; actor email and metadata redacted); backend enforcement only — frontend filtering is not sufficient.
+6. **S6 — Reconciliation & reporting:** multiple-owner detection report; zero-owner report-only list (no auto-repair); outlets missing subscriptions report; legacy-fallback usage report; denormalized-data drift checks. Reconciliation is a **precondition** for S7.
+7. **S7 — Migration `0015` (planned):** adds **only** `uq_business_one_owner` partial unique index on `business_memberships (business_id) WHERE role='owner'` plus ORM model metadata parity for the already-deployed `uq_business_current_subscription` index (model-only, no DDL). **Does not recreate** any deployed index. Requires S6 reconciliation to be clean first.
+8. **S8 — Tests & verification:** unit/integration coverage for each slice; re-run full platform-admin frontend suite; verify no planned feature is presented as shipped.
+
+### Explicit Non-Goals (this phase)
+- No outlet-count enforcement; plan catalog CRUD remains read-only.
+- No email/invitation/password-reset flows; no forced first-login password change.
+- No automatic repair of zero-owner businesses; no business-level plan selection or propagation.
+- No schema flag for `free_qr`; no recreation of the existing business-subscription index in migration `0015`.
+
+### Authorization Gate
+Implementation of S1–S8 requires explicit owner approval of the Stage 3 implementation plan as a separate task. This roadmap section and the associated documentation updates do **not** authorize code, migration, or test changes.
 
 ---
 

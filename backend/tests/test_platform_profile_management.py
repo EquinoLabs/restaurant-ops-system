@@ -181,7 +181,7 @@ def test_outlet_profile_update_permissions(client: TestClient, db_session: Sessi
     )
     assert resp.status_code == 403
 
-    # 3. Platform Operator -> 200 OK (Allowed per Decision D-01)
+    # 3. Platform Operator -> 403 Forbidden (Owner Decision 004: strict read-only Operators)
     op_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
         headers=test_setup["operator_headers"],
@@ -194,13 +194,11 @@ def test_outlet_profile_update_permissions(client: TestClient, db_session: Sessi
             "accent_color": "#F59E0B"
         }
     )
-    assert op_resp.status_code == 200
-    op_data = op_resp.json()
-    assert op_data["name"] == "Operator Updated Outlet"
-    assert op_data["address"] == "456 Operator Way, Manali"
-    assert op_data["primary_color"] == "#2563EB"
-    assert op_data["accent_color"] == "#F59E0B"
-    assert op_data["public_slug"] == "original-outlet-slug"  # Slug remains immutable
+    assert op_resp.status_code == 403
+
+    # Verify the rejected operator attempt did not mutate the outlet
+    db_session.refresh(outlet)
+    assert outlet.name == "Original Outlet Name"
 
     # 4. Platform Admin -> 200 OK
     admin_resp = client.patch(
@@ -237,12 +235,14 @@ def test_outlet_profile_update_permissions(client: TestClient, db_session: Sessi
 
 def test_outlet_profile_validation_and_slug_immutability(client: TestClient, db_session: Session, test_setup):
     outlet = test_setup["outlet"]
-    op_headers = test_setup["operator_headers"]
+    # Validation behaviors are exercised with an Admin caller; Operator writes are
+    # rejected with 403 before validation runs (Owner Decision 004).
+    admin_headers = test_setup["admin_headers"]
 
     # 1. Invalid timezone -> 422
     tz_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
-        headers=op_headers,
+        headers=admin_headers,
         json={"timezone": "Invalid/Fake_Zone"}
     )
     assert tz_resp.status_code == 422
@@ -251,7 +251,7 @@ def test_outlet_profile_validation_and_slug_immutability(client: TestClient, db_
     # 2. Invalid currency code -> 422
     curr_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
-        headers=op_headers,
+        headers=admin_headers,
         json={"currency": "RUPEES"}
     )
     assert curr_resp.status_code == 422
@@ -260,7 +260,7 @@ def test_outlet_profile_validation_and_slug_immutability(client: TestClient, db_
     # 3. Invalid hex colors -> 422
     color_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
-        headers=op_headers,
+        headers=admin_headers,
         json={"primary_color": "not-a-color"}
     )
     assert color_resp.status_code == 422
@@ -268,7 +268,7 @@ def test_outlet_profile_validation_and_slug_immutability(client: TestClient, db_
 
     color_resp2 = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
-        headers=op_headers,
+        headers=admin_headers,
         json={"accent_color": "#123"}  # 3-digit hex rejected
     )
     assert color_resp2.status_code == 422
@@ -276,7 +276,7 @@ def test_outlet_profile_validation_and_slug_immutability(client: TestClient, db_
     # 4. Slug immutability: passing public_slug in body does not change DB slug
     slug_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet.id}",
-        headers=op_headers,
+        headers=admin_headers,
         json={"name": "Valid Outlet", "public_slug": "hacked-slug"}
     )
     assert slug_resp.status_code == 200
@@ -338,7 +338,9 @@ def test_read_business_and_outlet_details(client: TestClient, db_session: Sessio
     assert client.get(f"/api/v1/platform/businesses/{fake_id}", headers=op_headers).status_code == 404
     assert client.get(f"/api/v1/platform/outlets/{fake_id}", headers=op_headers).status_code == 404
     assert client.patch(f"/api/v1/platform/businesses/{fake_id}", headers=admin_headers, json={"name": "X"}).status_code == 404
-    assert client.patch(f"/api/v1/platform/outlets/{fake_id}", headers=op_headers, json={"name": "X"}).status_code == 404
+    assert client.patch(f"/api/v1/platform/outlets/{fake_id}", headers=admin_headers, json={"name": "X"}).status_code == 404
+    # Operator cannot PATCH outlets at all (403 before resource lookup)
+    assert client.patch(f"/api/v1/platform/outlets/{fake_id}", headers=op_headers, json={"name": "X"}).status_code == 403
 
 
 def test_legacy_admin_business_read_receives_commercial_fields(client: TestClient, db_session: Session, test_setup):

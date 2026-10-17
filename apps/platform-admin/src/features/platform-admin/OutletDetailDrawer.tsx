@@ -44,7 +44,9 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
     authToken = null;
   }
 
-  // Operators may edit Outlet profiles only; Owners and Admins may edit Business name and view commercial data
+  // Owners and Admins may edit Business name and Outlet profiles and view commercial data.
+  // Operators are strictly read-only (Owner Decision 004) — mirrors backend
+  // PATCH /api/v1/platform/outlets/{outlet_id}, which allows owner/admin only.
   const userRole = currentUser?.platform_role?.trim().toLowerCase();
   const isAuthorizedCommercial = Boolean(
     currentUser && (
@@ -143,6 +145,10 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
   };
 
   const handleOpenOutletEdit = (outlet: PlatformOutlet) => {
+    if (!isCurrentOwnerOrAdmin) {
+      setOutletFormError('Permission denied: Platform Operators cannot edit outlet profiles.');
+      return;
+    }
     setEditingOutlet(outlet);
     setOutletForm({
       name: outlet.name,
@@ -164,6 +170,10 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
   const handleSaveOutletProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingOutlet || !activeBusiness) return;
+    if (!isCurrentOwnerOrAdmin) {
+      setOutletFormError('Permission denied: Platform Operators cannot edit outlet profiles.');
+      return;
+    }
 
     const cleanName = outletForm.name.trim();
     if (!cleanName) {
@@ -605,17 +615,26 @@ export const OutletDetailDrawer: React.FC<OutletDetailDrawerProps> = ({
                         </a>
 
                         <div className="flex items-center space-x-2">
-                          {/* Edit Outlet Profile button available to Owners, Admins, and Operators */}
-                          <button
-                            onClick={() => handleOpenOutletEdit(outlet)}
-                            className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors flex items-center space-x-1"
-                            aria-label={`Edit Profile for ${outlet.name}`}
-                          >
-                            <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                            </svg>
-                            <span>Edit Profile</span>
-                          </button>
+                          {/* Edit Outlet Profile button available to Owners and Admins only (Owner Decision 004) */}
+                          {isCurrentOwnerOrAdmin ? (
+                            <button
+                              onClick={() => handleOpenOutletEdit(outlet)}
+                              className="px-3 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-semibold transition-colors flex items-center space-x-1"
+                              aria-label={`Edit Profile for ${outlet.name}`}
+                            >
+                              <svg className="w-3.5 h-3.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                              <span>Edit Profile</span>
+                            </button>
+                          ) : (
+                            <span
+                              className="text-[10px] text-slate-500 font-semibold px-2 py-0.5 rounded bg-slate-800/50 border border-slate-700/50"
+                              title="Outlet profile editing requires Platform Owner or Admin privileges"
+                            >
+                              Profile locked
+                            </span>
+                          )}
 
                           {onAssignOwner && isCurrentOwnerOrAdmin && (
                             <button

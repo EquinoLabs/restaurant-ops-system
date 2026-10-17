@@ -12,7 +12,7 @@ import { PlansPage } from './features/platform-admin/PlansPage';
 import { SubscriptionsOverviewPage } from './features/platform-admin/SubscriptionsOverviewPage';
 import { AdminsPage } from './features/platform-admin/AdminsPage';
 import { AuditLogsPage } from './features/platform-admin/AuditLogsPage';
-import { NotFoundView } from '@roms/ui';
+import { NotFoundPage } from './components/errors/NotFoundPage';
 
 export const PlatformAdminApp: React.FC = () => {
   return (
@@ -51,12 +51,7 @@ export const PlatformAdminApp: React.FC = () => {
             <Route path="audit-logs" element={<AuditLogsPage />} />
           </Route>
 
-          <Route
-            path="*"
-            element={
-              <NotFoundView message="The platform administrative page you requested does not exist." />
-            }
-          />
+          <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </AuthProvider>
     </BrowserRouter>

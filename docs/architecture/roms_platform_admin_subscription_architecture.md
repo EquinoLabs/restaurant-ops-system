@@ -6,6 +6,19 @@
 
 ---
 
+> [!WARNING]
+> **Stage 3 Supersession Notice (2026-10-17)** — Parts of this document are historical Phase B specification. The authoritative Stage 3 target architecture is **`docs/architecture/stage_3_ownership_subscriptions_architecture.md`** (governed by Owner Decisions 002–004 in `roms_owner_decisions.md`). Key corrections:
+>
+> 1. **Subscription authority is outlet-level, not business-level (Decision 002).** The shipped Phase B implementation created `outlet_subscriptions` (migration `0010`), not the `business_subscriptions` table proposed in §4.4. Every outlet has its own independent subscription; there is no business-level plan selection and no propagation of business-level subscription changes to outlets. §4.4 is retained as the historical Phase B proposal only.
+> 2. **Business creation no longer auto-creates an outlet or trial (Decision 002/003).** The current shipped `POST /platform/businesses` still provisions a primary outlet and an automatic 30-day trial; the target removes both. Outlet creation requires plan selection with Trial as the default.
+> 3. **`free_qr` non-expiring semantics (Decision 002):** the existing `free_qr` plan code represents an active, free, **non-expiring** subscription, distinguishable from an expired paid subscription. This is resolved in the entitlement resolver's status evaluation (`EntitlementService`); **no schema flag or schema change is approved**.
+> 4. **Legacy fallback = compatibility only (Decision 002):** the shipped entitlement resolver retains a legacy business-subscription fallback for pre-existing data (`EntitlementService` synthesizes a paid plan from legacy `Business` scalar fields when an outlet has no valid `OutletSubscription` row). This fallback is **legacy compatibility, not target architecture**. Removal criteria: all outlets have explicit `OutletSubscription` rows and no resolver call reaches the fallback path in a full reconciliation report. It must not be used to grant new outlets silent paid entitlements.
+> 5. **Migration/index plan (Decision 002 migration ruling):** `uq_business_current_subscription` (partial unique index on `business_subscriptions.is_current`) was **already created** in shipped migration `0010`; the ORM `BusinessSubscription`-successor model (`outlet_subscriptions`) lacks matching `__table_args__` metadata parity. Planned migration `0015` adds **only** the missing `uq_business_one_owner` index on business ownership plus ORM metadata parity for the existing index — it does **not** recreate any deployed index. Migration `0015` is planned only; it is **not implemented or applied**.
+> 6. **Preserved lifecycle rules remain valid:** the zero-day grace period policy (§6), cancellation timestamp semantics, atomic switching mechanics, override precedence (Owner Decision 001), and the legacy plan-alias mapping table (§7) remain in force unless contradicted above.
+> 7. **Ownership and Operator corrections** (Decisions 003–004) are outside this document's scope and live in `platform-access-control-and-team-management.md` and the Stage 3 architecture reference.
+
+---
+
 ## 1. Executive Summary
 
 ROMS (Restaurant Operations Management System) is designed to serve a diverse spectrum of restaurant formats on a single shared platform:
@@ -135,6 +148,8 @@ Mapping between plans and included features/limits.
 
 ### 4.4 `business_subscriptions`
 Authoritative source of truth for business subscriptions and historical records.
+
+> `[Historical Phase B proposal — superseded in shipped implementation]` The Phase B migration `0010` actually created the **`outlet_subscriptions`** table (keyed by `outlet_id`), consistent with Owner Decision 002 (outlet-scoped subscriptions). The `business_subscriptions` schema below is retained as the historical Phase B proposal and for the integrity mechanics that were carried forward to the shipped table (single-current partial unique index, fail-closed on missing current row, atomic switching). The shipped index `uq_business_current_subscription` exists in migration `0010`; the shipped ORM model lacks matching `__table_args__` metadata parity (to be added alongside planned migration `0015`, which does not recreate the index).
 - `id`: UUID (PK)
 - `business_id`: UUID (FK to `businesses.id`, CASCADE)
 - `plan_id`: UUID (FK to `plans.id`, RESTRICT)
@@ -247,9 +262,21 @@ Step 5: State-Relevant Timestamp Validation & Zero-Day Expiry Check
 
 ## 7. Authoritative Source of Truth & Approved Migration Policy
 
-- **Authoritative Source of Truth**: After Phase B migration, `BusinessSubscription` (and its associated `Plan` feature catalog mapping) is the **sole authoritative source of truth** for feature authorization.
+> `[Target — Owner Decision 002]` Subscription authority is the **outlet's** current `OutletSubscription` row (shipped `outlet_subscriptions` table, migration `0010`) together with the `Plan` feature catalog and `EntitlementOverride` records. The business-level wording below is the historical Phase B formulation; the shipped resolver checks the target **outlet's** subscription first, with business-scoped overrides applying only where no outlet-scoped override exists (Owner Decision 001 precedence). There is no business-level plan selection and no business-to-outlet subscription propagation.
+
+- **Authoritative Source of Truth**: After Phase B migration, the current `OutletSubscription` row (and its associated `Plan` feature catalog mapping) is the **sole authoritative source of truth** for feature authorization.
 - **Transitional Role of Legacy Fields**: Legacy scalar fields (`Business.plan_name`, `subscription_status`, `max_outlets`, `trial_ends_at`) are retained during Phase B for backward compatibility only. A legacy scalar or legacy `plan_name` string **MUST NOT** independently grant a feature that is excluded by the authoritative active subscription plan.
-- **Admin Write Synchronization**: In `platform_service.py`, `update_business_subscription()` is updated to write to `BusinessSubscription` atomically while updating `Business` scalar fields during the transition period.
+- **Legacy Fallback — Compatibility Only (removal criteria):** For pre-existing outlets that have no explicit subscription row, the shipped `EntitlementService` falls back to legacy business scalar fields and may synthesize an active paid-plan entitlement (`service.py` legacy fallback path). This behavior exists solely for legacy-data compatibility and **must not** grant new outlets silent paid-tier entitlements (new outlets always receive an explicit subscription at creation). Removal criteria: (1) a reconciliation report shows every active outlet has an explicit `OutletSubscription` row; (2) resolver telemetry/log review shows no production call reaching the fallback path; (3) owner approves removal in a dedicated change.
+- **Admin Write Synchronization**: In `platform_service.py`, subscription mutation functions write to `OutletSubscription` atomically while updating legacy `Business` scalar fields during the transition period.
+
+### `free_qr` Non-Expiring Semantics (Owner Decision 002)
+The existing `free_qr` plan code represents the Free QR Menu offering as an **active, free, non-expiring** subscription, distinguishable from an expired paid subscription. The entitlement resolver recognizes the `free_qr` plan specially in status evaluation (a `free_qr` subscription without `current_period_end` stays active indefinitely rather than evaluating as expired). **No schema flag or schema change is approved for this**; the behavior is resolver logic over the existing plan code.
+
+### Corrected Migration & Index Plan (Owner Decision 002 migration ruling)
+- `uq_business_current_subscription` (partial unique index, shipped in migration `0010` on the subscription table's `(…id…) WHERE is_current = TRUE`) already exists in deployed databases. ORM model metadata parity is still missing and will be added as model-only changes (no DDL).
+- Planned migration **`0015` adds only** the missing `uq_business_one_owner` partial unique index on business ownership (`(business_id) WHERE role='owner'`), subject to data reconciliation (multiple-owner cleanup) and preconditions. It does **not** recreate `uq_business_current_subscription` or any other deployed index.
+- Zero-owner businesses are report-only; no automatic repair is authorized.
+- Migration `0015` and all Stage 3 implementation steps are **planned only** and require separate authorization.
 
 ### Explicit Legacy Plan Mappings & Approved Aliases
 During Phase B migration `0010_subscription_entitlements_schema.py`, existing legacy `Business.plan_name` strings are mapped explicitly:
@@ -351,8 +378,8 @@ Alembic migrations execute within a database transaction managed natively by Ale
 1. **Zero-Day Grace Period**: All operational access terminates immediately at `now >= current_period_end` or `now >= trial_ends_at`. Scheduled cancellations do NOT receive a grace period.
 2. **Mandatory Atomic Migration Rollback**: Migration `0010` MUST halt and roll back atomically if unmapped, NULL, or empty `plan_name` values exist. Silent auto-mapping to `free_qr` is forbidden.
 3. **Approved Plan Aliases**: `"digital_menu"` and `"free"` map to `free_qr`.
-4. **Authoritative Subscription Entitlements**: Active `BusinessSubscription` plan and administrative overrides are sole authorities for feature authorization. Explicit numeric grant overrides may exceed plan caps; without an explicit numeric grant override, legacy scalars cannot inflate plan caps. Restriction overrides take precedence over grants.
-5. **Shared Platform Architecture & 5-Table Phase B Scope**: Scope limited to `plans`, `features`, `plan_features`, `business_subscriptions`, `entitlement_overrides`.
+4. **Authoritative Subscription Entitlements**: Active subscription plan and administrative overrides are sole authorities for feature authorization (`[Stage 3 correction]` the authority is the **outlet's** current `OutletSubscription`, per Owner Decision 002; the business-level wording here is historical). Explicit numeric grant overrides may exceed plan caps; without an explicit numeric grant override, legacy scalars cannot inflate plan caps. Restriction overrides take precedence over grants.
+5. **Shared Platform Architecture & 5-Table Phase B Scope**: Scope limited to `plans`, `features`, `plan_features`, `business_subscriptions`, `entitlement_overrides` (`[Stage 3 correction]` shipped as `outlet_subscriptions` keyed by `outlet_id` instead of `business_subscriptions`, per Owner Decision 002).
 
 ### Category B: Codebase State vs. Owner Confirmation Requested
 1. **Business Operational Status**: Implemented choices in ORM model are `"active"` and `"suspended"`. Choice `"archived"` is documented as a deferred future non-operational business status (not currently implemented in ORM/migrations). Phase B tests enforce implemented `"suspended"` behavior only.

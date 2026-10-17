@@ -1,9 +1,11 @@
 # ROMS Platform Access Control & Team Management Architecture
 
-**Document Version:** 1.9.1
-**Status:** Architecture Specification & Phased Execution Progress (Phases 1–6 Accepted & Closed; Task 1.1 Accepted; Stage 1 In Progress)
+**Document Version:** 2.0.0
+**Status:** Architecture Specification & Phased Execution Progress (Phases 1–6 Accepted & Closed; Task 1.1 Accepted; Stage 1 In Progress). v2.0.0 aligns the document with the approved Stage 3 product decisions (Owner Decisions 002–004); Stage 3 enforcement changes are **not implemented**.
 **Target Path:** `docs/architecture/platform-access-control-and-team-management.md`  
 **Author:** Senior Product Architect & Platform Security Reviewer  
+
+> **Stage 3 alignment note (2026-10-17):** This document now defers to `docs/architecture/stage_3_ownership_subscriptions_architecture.md` as the primary Stage 3 target-architecture reference. Sections corrected in v2.0.0: §1 (subscriptions are outlet-scoped; Operator is strictly read-only), §3.1/§3.2 (Operator capabilities and the permission matrix), §3.3 (DECISION-OP-01 resolved for business owners). The "Subscriptions Remain Business-Level" invariant of §1 and the Operator write capabilities previously documented here are **superseded** by Owner Decisions 002 and 004 and must not be treated as current policy. Historical detail in §§5–10 concerning the platform-plane three-tier model (Owner/Admin/Operator platform team) remains valid except where it conflicts with the Stage 3 corrections called out here.
 
 ---
 
@@ -23,6 +25,7 @@
 | `1.8.1` | 2026-10-12 | Senior Product Architect & Platform Security Reviewer | Corrected audit durability wording in §6.2 to require a committed, auditable record without claims of indelibility or permanent persistence, aligning with §5.4; clarified the operational meaning of quarantine in §6.2 and §6.4 as exclusion from successful reconciliation and fail-closed gate blocking without implying a separate database table or subsystem; preserved no-guessing, no-precedence, and valid role pair preservation rules; reaffirmed DECISION-OP-01 through OP-05. |
 | `1.9.0` | 2026-10-13 | Senior Product Architect & Platform Security Reviewer | Formally recorded Phase 6 (Business & Outlet Profile Management) acceptance and closure; resolved security findings M-01 (API data exposure) and L-01 (Frontend card visibility); verified 138/138 backend and 76/76 frontend tests passing; recorded final read-only authorization audit PASS; confirmed draft migration 0011 remains unapplied (zero live DB migrations); reaffirmed open decisions OP-01 through OP-05. |
 | `1.9.1` | 2026-10-13 | Senior Product Architect & Platform Security Reviewer | Formally recorded Task 1.1 acceptance (Migration 0011 structural & execution test harness, CLI dual-write promotion & Owner protection); verified 146/146 backend tests passing (33/33 in focused suites); noted SQLite test boundary for PostgreSQL advisory locks and partial unique indexes; confirmed migration 0011 remains unapplied draft with zero live DB operations; reaffirmed OP-01 through OP-05 strictly OPEN; confirmed initial Owner identity unresolved and Stage 1 remains in progress. |
+| `2.0.0` | 2026-10-17 | Senior Product Architect & Platform Security Reviewer | Stage 3 alignment with Owner Decisions 002–004 and `stage_3_ownership_subscriptions_architecture.md`: (1) corrected §1 "Subscriptions Remain Business-Level" invariant — subscriptions are strictly **outlet-scoped**, with no business-level plan selection or propagation (Decision 002); (2) redefined the Platform Operator as **strict read-only** over approved read pages (Overview, Businesses, details, Subscriptions, Plans, Audit Logs) with backend-enforced restrictions, removing all previously documented Operator write capabilities including the platform-menu write exception (Decision 004); (3) documented exactly-one-owner-per-business, manager assignment boundaries, owner access to all business outlets, explicit auditable ownership transfer (`platform.business_owner.transfer`, previous owner demoted to manager), and inactive-target rejection (Decision 003); (4) documented the initial owner-password decision (administrator-set password at business creation; no forced first-login change; email/invite/reset flows out of scope) and resolved DECISION-OP-01 for business owners; (5) updated §3.2 permission matrix Operator columns and audit-log visibility. No implementation, migration, or enforcement change is authorized or completed by this revision. |
 
 ---
 
@@ -33,10 +36,12 @@ ROMS is an enterprise multi-tenant restaurant operations platform featuring a ce
 As ROMS scales from initial administrative bootstrapping to multi-operator SaaS governance, the current binary platform administrator model (`User.is_platform_admin: bool`) must be formalized into a **Three-Tier Platform Access Control Model**:
 1. **Platform Owner:** Authoritative platform custodian with full authority over authorized platform governance and SaaS control-plane operations, protected from accidental self-demotion, self-revocation, deactivation, suspension, or deletion, with ownership transfer guarded by strong re-authentication. Platform Owner privileges are strictly scoped to authorized platform-level SaaS control-plane operations and do not grant implicit tenant membership (`OutletMembership`), automatic access to tenant-scoped endpoints, or bypass of tenant route boundaries.
 2. **Platform Admin:** Commercial and operational administrator capable of provisioning tenants, managing subscriptions, plans, and entitlement overrides, and managing platform Operators, but strictly barred from modifying, demoting, or revoking other Admins or the Owner.
-3. **Platform Operator:** Operational onboarding specialist permitted to create and edit business/outlet operational profiles and manage outlet menu content through dedicated platform operations, but strictly barred from touching subscriptions, plans, entitlement overrides, platform users, or destructive tenant operations.
+3. **Platform Operator:** Read-only support specialist permitted to view approved platform pages (Overview, Businesses, business/outlet details, Subscriptions, Plans, and Audit Logs) but strictly barred from mutating any business, outlet, subscription, plan, ownership, platform team membership, audit record, or platform menu data. Previously documented Operator write capabilities (business/outlet provisioning, profile edits, menu content management) are removed by Owner Decision 004; the enforced restriction must live in backend router dependencies, not only in frontend navigation filtering.
 
 ### Preservation of Core Product Invariants
-- **Subscriptions Remain Business-Level:** Subscriptions remain authoritative at the `Business` tenant level. Any future transition to outlet-level subscriptions remains explicitly out of scope for this architecture and requires a separate, dedicated architectural initiative.
+- **Subscriptions Are Outlet-Scoped (Owner Decision 002 — supersedes the former "Subscriptions Remain Business-Level" invariant):** Every outlet has its own independent subscription; different outlets in the same business may have different plans and lifecycle statuses. Business creation creates no outlet, subscription, or trial; outlet creation requires plan selection (Trial default, 30-day duration preserved); there is no business-level plan selection and no propagation of business-level subscription changes to outlets. The `free_qr` plan code provides non-expiring Free QR Menu semantics without any schema change. The former instruction that "any future transition to outlet-level subscriptions remains explicitly out of scope" is removed; see `docs/architecture/stage_3_ownership_subscriptions_architecture.md` for the authoritative target.
+- **Exactly One Owner per Business (Owner Decision 003):** Each business has exactly one owner at a time, enforced by the planned partial unique index `uq_business_one_owner` (migration `0015`, planned — not applied) plus application-level transfer-under-lock. The owner has access to all outlets of the business; managers access only explicitly assigned outlets. Ownership transfer is explicit, atomic, and auditable (`platform.business_owner.transfer`, distinct from the platform-plane `platform.owner.transfer`), and demotes the previous owner to manager. Suspended or inactive users are rejected as owner/manager targets. Existing zero-owner businesses are report-only.
+- **Initial Owner Password (Owner Decision 003):** Business creation requires mandatory owner details; the authorized platform administrator sets the initial owner password via the Platform Admin portal. There is no forced password-change-on-first-login flow. Email-based reset, invitation, or credential-delivery flows are future scope. Passwords and password hashes are never logged, never written to audit metadata, and never exposed in error messages.
 - **Tenant Membership Isolation:** Platform roles remain decoupled from restaurant-level staff roles (`OutletMembership`). Platform roles do not confer implicit tenant membership or automatic access to tenant-scoped routes. No blanket bypass of tenant route guards will be introduced for any platform role, including the Platform Owner.
 - **Backend as Authoritative Source of Truth:** All security and privilege checks execute strictly server-side, with server-derived actor identity.
 - **Zero Automatic Guessing of Owner Identity:** Migration must never guess or assign the Owner role based on account creation timestamp or implicit conventions. Initial ownership requires explicit, verified written authorization.
@@ -220,10 +225,10 @@ Before any implementation task is undertaken, an exhaustive audit must verify:
                                       ▼
                   ┌────────────────────────────────────────┐
                   │           Platform Operator            │
-                  │   • Tenant creation & profile edits    │
-                  │   • Outlet menu & branding operations  │
-                  │   • Dedicated platform endpoints only  │
-                  │   • Non-destructive operational scope  │
+                  │   • READ-ONLY (Owner Decision 004)     │
+                  │   • View approved pages only           │
+                  │   • No mutations anywhere              │
+                  │   • Backend-enforced restriction       │
                   └────────────────────────────────────────┘
 ```
 
@@ -250,17 +255,19 @@ Before any implementation task is undertaken, an exhaustive audit must verify:
   - **Vertical Protection:** An Admin **cannot modify, demote, revoke, or deactivate the Owner**.
   - **No Privilege Escalation:** An Admin cannot promote any user (including themselves or Operators) to Admin or Owner.
 
-#### 3. Platform Operator
-- **Scope:** Customer onboarding, operational profile setup, and outlet menu content management.
-- **Capabilities:**
-  - Create new businesses and outlets (initial customer provisioning).
-  - Edit business and outlet metadata (profiles, branding, contact details within approved scope).
-  - Manage outlet menus, categories, items, pricing, availability toggles, and item images through dedicated platform operations.
+#### 3. Platform Operator `[Target — strictly read-only per Owner Decision 004]`
+- **Scope:** Read-only support access to approved Platform Admin pages for inspection and customer support.
+- **Capabilities (read-only):**
+  - View the Overview dashboard.
+  - View the Businesses directory and business/outlet detail pages (profiles, outlets, effective features).
+  - View outlet Subscriptions and the Plans catalog (read-only).
+  - View platform Audit Logs through a redacted read-only serializer (minimum necessary fields; actor email and free-form metadata payloads are redacted).
 - **Invariants & Strict Restrictions:**
-  - **No Commercial Authority:** Cannot view or modify subscriptions, execute renewals, change plans, cancel accounts, or issue entitlement overrides.
-  - **No Platform User Governance:** Cannot view the platform user management directory or manage platform users (Owner, Admin, or Operator).
-  - **No Access to Audit Logs:** Cannot view platform audit logs or tenant audit logs.
-  - **Non-Destructive Boundary:** Cannot delete businesses, outlets, or purge operational data.
+  - **No Mutations of Any Kind:** Cannot create, update, or delete businesses, outlets, subscriptions, entitlement overrides, plans, ownership or manager assignments, platform team membership, audit records, or platform menu data. The previously documented platform-menu write exception is removed; platform menu access is read-only for Operators.
+  - **Backend Enforcement Required:** Restrictions are enforced by backend router dependencies (`RequirePlatformRole`); frontend navigation filtering alone is insufficient. Any shipped route that currently permits Operator writes (e.g. the outlet-profile `PATCH` reachable via the profile router) is a gap to be corrected under Stage 3.
+  - **No Commercial Authority:** Cannot execute renewals, change plans, cancel accounts, or issue entitlement overrides.
+  - **No Platform User Governance:** Cannot view the platform user management directory or manage platform users (Owner, Admin, or Operator). Team administration is unavailable to Operators.
+  - **No Non-Destructive Boundary Assumption:** Because writes are prohibited entirely, delete-specific restrictions are subsumed by the general no-mutation rule.
   - **No Operational Scope Creep:** Cannot manage restaurant dining tables, generate/download customer QR codes, or manage restaurant staff memberships.
 
 ---
@@ -279,30 +286,33 @@ The matrix distinguishes **current route/service availability**, **current autho
 | | Reset Password for Platform Operators | Planned Feature (Open Decision) | None (Feature does not exist) | ❓ Pending | ❓ Pending | ❌ | ❌ |
 | | Reactivate Suspended Platform Account | Planned Feature (Open Decision) | None (Feature does not exist) | ✅ (Owner Only) | ❌ | ❌ | ❌ |
 | | View Platform Users Directory | Implemented (`GET /admins`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
-| **Commercial & Subscriptions** | View Platform Subscription History | Implemented (`/businesses/{id}/subscriptions`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
-| | View Tenant Subscription Details | Planned Feature (Open Decision) | None (Feature does not exist) | ✅ | ✅ | ❌ | ❓ Pending |
+| **Commercial & Subscriptions** | View Platform Subscription History | Implemented (`/businesses/{id}/subscriptions`) | `is_platform_admin == True` | ✅ | ✅ | ✅ (read-only) `[Target]` | ❌ |
+| | View Tenant Subscription Details | Planned Feature (Open Decision) | None (Feature does not exist) | ✅ | ✅ | ✅ (read-only) `[Target]` | ❓ Pending |
 | | Update Subscription (Renew, Plan Change) | Implemented (`/businesses/{id}/subscription`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
 | | Cancel Subscription (Scheduled/Immediate) | Implemented (`/businesses/{id}/subscription`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
 | | Create / Revoke Entitlement Overrides | Implemented (`/subscriptions/overrides`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
 | | Suspend / Reactivate Business Account | Implemented (`/businesses/{id}`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
-| **Tenant Provisioning & Profiles** | Provision New Business Tenant | Implemented (`POST /businesses`) | `is_platform_admin == True` | ✅ | ✅ | ✅ | ❌ |
-| | Add Outlet to Business | Implemented (`POST /businesses/{id}/outlets`) | `is_platform_admin == True` | ✅ | ✅ | ✅ | ❌ |
-| | Assign Initial Tenant Owner (`role="owner"`) | Implemented (`POST /businesses/{id}/assign-owner`) | `is_platform_admin == True` | ✅ | ✅ | ✅ | ❌ |
-| | Edit Business / Outlet Profile | Planned Feature (Task B) | None (Feature does not exist) | ❓ Task B | ❓ Task B | ❓ Task B | ❓ Task B |
+| **Tenant Provisioning & Profiles** | Provision New Business Tenant | Implemented (`POST /businesses`) | `is_platform_admin == True` | ✅ | ✅ | ❌ `[Target]` | ❌ |
+| | Add Outlet to Business | Implemented (`POST /businesses/{id}/outlets`) | `is_platform_admin == True` | ✅ | ✅ | ❌ `[Target]` | ❌ |
+| | Assign Initial Tenant Owner (`role="owner"`) | Implemented (`POST /businesses/{id}/assign-owner`) | `is_platform_admin == True` | ✅ | ✅ | ❌ `[Target]` | ❌ |
+| | Transfer Business Ownership (demote previous owner to manager) | Planned Feature (Stage 3; audit action `platform.business_owner.transfer`) | None (Feature does not exist) | ✅ | ✅ | ❌ | ❌ |
+| | Edit Business / Outlet Profile | Planned Feature (Task B) | None (Feature does not exist) | ❓ Task B | ❓ Task B | ❌ `[Target]` | ❓ Task B |
 | | Permanently Delete Business / Outlet | Planned Feature (Non-MVP) | None (Feature does not exist) | ❌ (MVP) | ❌ (MVP) | ❌ | ❌ |
-| **Tenant Menu Operations** | View Outlet Menu via Platform Endpoint | Planned Platform Route (`GET /platform/outlets/{id}/menu`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ | ✅ (Own Tenant) |
-| | Create / Update Menu Categories via Platform | Planned Platform Route (`POST/PATCH /platform/outlets/{id}/menu/categories`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ | ✅ (Own Tenant) |
-| | Create / Update Menu Items via Platform | Planned Platform Route (`POST/PATCH /platform/outlets/{id}/menu/items`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ | ✅ (Own Tenant) |
-| | Toggle Item Availability via Platform | Planned Platform Route (`PATCH .../availability`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ | ✅ (Own Tenant) |
-| | Upload Menu Item Images via Platform | Planned Platform Route (`POST .../image`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ | ✅ (Own Tenant) |
+| **Tenant Menu Operations** | View Outlet Menu via Platform Endpoint | Planned Platform Route (`GET /platform/outlets/{id}/menu`) | Domain service exists; Platform route Planned | ✅ | ✅ | ✅ (read-only) | ✅ (Own Tenant) |
+| | Create / Update Menu Categories via Platform | Planned Platform Route (`POST/PATCH /platform/outlets/{id}/menu/categories`) | Domain service exists; Platform route Planned | ✅ | ✅ | ❌ `[Target]` | ✅ (Own Tenant) |
+| | Create / Update Menu Items via Platform | Planned Platform Route (`POST/PATCH /platform/outlets/{id}/menu/items`) | Domain service exists; Platform route Planned | ✅ | ✅ | ❌ `[Target]` | ✅ (Own Tenant) |
+| | Toggle Item Availability via Platform | Planned Platform Route (`PATCH .../availability`) | Domain service exists; Platform route Planned | ✅ | ✅ | ❌ `[Target]` | ✅ (Own Tenant) |
+| | Upload Menu Item Images via Platform | Planned Platform Route (`POST .../image`) | Domain service exists; Platform route Planned | ✅ | ✅ | ❌ `[Target]` | ✅ (Own Tenant) |
 | **Tenant Operations Excluded from Operator** | Manage Dining Tables & Layouts | Implemented (`/api/v1/tables/...`) | `RequireOutletRole(["owner", "manager"])` | ❌ (Platform) | ❌ (Platform) | ❌ | ✅ (Own Tenant) |
 | | Generate / Download Physical QR Codes | Implemented (`/api/v1/qr/...`) | `RequireOutletRole(["owner", "manager"])` | ❌ (Platform) | ❌ (Platform) | ❌ | ✅ (Own Tenant) |
 | | Manage Restaurant Staff (`OutletMembership`) | Implemented (`/api/v1/staff/...`) | `RequireOutletRole(["owner"])` | ❌ (Platform) | ❌ (Platform) | ❌ | ✅ (Own Tenant) |
-| **Audit & Compliance** | View Platform Audit Logs | Implemented (`/api/v1/platform/audit-logs`) | `is_platform_admin == True` | ✅ | ✅ | ❌ | ❌ |
+| **Audit & Compliance** | View Plans Catalog (read-only) | Implemented (`GET /platform/plans`) | `is_platform_admin == True` | ✅ | ✅ | ✅ (read-only) `[Target]` | ❌ |
+| | View Platform Audit Logs | Implemented (`/api/v1/platform/audit-logs`) | `is_platform_admin == True` | ✅ | ✅ | ✅ (redacted serializer) `[Target]` | ❌ |
 | | View Outlet Audit Logs (Tenant Route) | Implemented (`/api/v1/admin/outlets/{id}/audit-logs`) | `RequireOutletRole(["owner", "manager"])` | ❌ (No Implicit Access) | ❌ (No Implicit Access) | ❌ | ✅ (Own Outlet) |
 | | View Outlet Audit Logs (Platform Route) | Planned Platform Route (`GET /platform/outlets/{id}/audit-logs`) | None (Feature does not exist) | ✅ | ✅ | ❌ | ❌ |
 
 *Clarifications on Implementation Status & Tenant Audit Boundary:*
+0. **Stage 3 Operator Read Access (Owner Decision 004):** Operator read access to Businesses, business/outlet details, Subscriptions, Plans, and Audit Logs is a **target** capability requiring dedicated read endpoints or extended guards plus a redacted audit serializer (minimum necessary fields; actor email and free-form metadata redacted). Where current guards block Operators (e.g. `is_platform_admin == True` checks), backend changes are required; frontend-only visibility is insufficient. Operator **write** access, previously shown as ✅ for provisioning and menu operations, is removed from this matrix.
 1. **Reconciliation of Outlet Audit Log Permissions:**
    - The existing tenant endpoint `GET /api/v1/admin/outlets/{outlet_id}/audit-logs` enforces `RequireOutletRole(["owner", "manager"])`. Platform Owner and Admin tokens calling this route receive `HTTP 403 Forbidden` unless they possess an explicit outlet membership.
    - If cross-tenant platform audit inspection is desired, it must be provided through a **dedicated platform endpoint** (`GET /api/v1/platform/outlets/{outlet_id}/audit-logs`) guarded by `RequirePlatformRole(["owner", "admin"])`. This endpoint is documented as **planned functionality** and is not currently implemented.
@@ -319,7 +329,7 @@ The following product decisions remain open and require explicit platform owner 
 
 | Decision Identifier | Architectural Context | Options Under Review | Trade-offs & Security Impact |
 | :--- | :--- | :--- | :--- |
-| **DECISION-OP-01** | **Operator Onboarding Credential Flow** | **A:** Admin sets temporary password with forced change flag.<br>**B:** Cryptographic expiring email invitation token. | Option A avoids transactional email setup but requires credential session-interception middleware; Option B is more secure and industry-standard but requires email infrastructure. |
+| **DECISION-OP-01** | **Operator Onboarding Credential Flow** | **RESOLVED for business owners (Owner Decision 003, 2026-10-17):** the authorized platform administrator sets the initial password for a new business owner during business creation in the Platform Admin portal. No temporary generated credentials, no forced change-on-first-login, and no email invitation/reset flows in this phase; email-based flows are future scope. **Still open for platform Operator provisioning** (whether the same administrator-set pattern applies) and for manager provisioning unless separately confirmed. | The resolved owner pattern reuses the shipped `users` + `password_hash` flow and avoids email infrastructure; password values are never logged, audited, or echoed. |
 | **DECISION-OP-02** | **Ownership Transfer Protocol** | **A:** Single-step re-authenticated transfer by Owner.<br>**B:** Two-phase proposal & target acceptance handshake. | Option A is simpler and immediate; Option B prevents accidental transfer to an inactive or unwilling Admin. |
 | **DECISION-OP-03** | **Emergency Break-Glass Recovery Protocol** | **A:** CLI tool restricted to direct server access.<br>**B:** Out-of-band database runbook requiring multi-party signoff. | Option A provides automated validation and advisory locking; Option B avoids deploying automated privilege-override scripts. |
 | **DECISION-OP-04** | **Initial Owner Identity Selection** | **Prerequisite Decision:** Explicit selection of initial Owner account identifier. | Cannot be automated or guessed; requires explicit written designation prior to migration execution. |
@@ -328,6 +338,8 @@ The following product decisions remain open and require explicit platform owner 
 ---
 
 ## 4. Tenant Authorization Boundary & Operator Menu Access Design
+
+> **Owner Decision 004 supersession:** The platform-menu write design below (Operators included in `RequirePlatformRole(["owner", "admin", "operator"])` on mutating menu routes) is **superseded**. Under Stage 3, platform menu access is read-only for Operators; mutating menu routes are restricted to `["owner", "admin"]`, and the broader no-mutation rule for Operators applies. The architectural rationale in this section (dedicated platform endpoints over blanket tenant-route bypasses) remains valid and is preserved.
 
 ### 4.1 Rejection of the Blanket Tenant Route Bypass
 The earlier proposal to modify `_verify_item_membership` in `backend/app/api/v1/admin_menu.py` to allow any platform user to bypass `OutletMembership` checks is **rejected**. 

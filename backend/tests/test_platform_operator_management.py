@@ -641,14 +641,16 @@ def test_rbac_operator_role_boundaries(client: TestClient, db_session: Session):
     biz = db_session.query(Business).first()
     assert client.post(f"/api/v1/platform/businesses/{biz.id}/assign-owner", headers=headers, json={"outlet_id": str(uuid.uuid4())}).status_code == 403
 
-    # 4. Operator allowed on profile routes (GET business, GET outlet, PATCH outlet)
+    # 4. Operator allowed on profile READ routes (GET business, GET outlet)
     outlet = db_session.query(Outlet).first()
     assert client.get(f"/api/v1/platform/businesses/{biz.id}", headers=headers).status_code == 200
     assert client.get(f"/api/v1/platform/outlets/{outlet.id}", headers=headers).status_code == 200
-    patch_resp = client.patch(f"/api/v1/platform/outlets/{outlet.id}", headers=headers, json={"name": "Op Updated Outlet"})
-    assert patch_resp.status_code == 200
 
-    # 5. Operator allowed on platform menu routes
+    # 5. Operator denied profile WRITE route (PATCH outlet) — Owner Decision 004
+    patch_resp = client.patch(f"/api/v1/platform/outlets/{outlet.id}", headers=headers, json={"name": "Op Updated Outlet"})
+    assert patch_resp.status_code == 403
+
+    # 6. Operator allowed on platform menu READ route
     menu_resp = client.get(f"/api/v1/platform/outlets/{outlet.id}/menu", headers=headers)
     assert menu_resp.status_code == 200
 

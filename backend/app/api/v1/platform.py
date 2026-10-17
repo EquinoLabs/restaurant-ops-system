@@ -96,13 +96,13 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
         "service_level_auth": None,
     },
     ("GET", "/api/v1/platform/plans"): {
-        "router": "commercial_router",
-        "allowed_roles": {"owner", "admin"},
+        "router": "profile_router",
+        "allowed_roles": {"owner", "admin", "operator"},
         "service_level_auth": None,
     },
     ("GET", "/api/v1/platform/businesses"): {
-        "router": "commercial_router",
-        "allowed_roles": {"owner", "admin"},
+        "router": "profile_router",
+        "allowed_roles": {"owner", "admin", "operator"},
         "service_level_auth": None,
     },
     ("GET", "/api/v1/platform/businesses/{business_id}/subscriptions"): {
@@ -157,37 +157,37 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
     },
     ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/categories"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/categories/{category_id}"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/items"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("PATCH", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/availability"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("POST", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("DELETE", "/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image"): {
         "router": "platform_menu_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
     ("GET", "/api/v1/platform/businesses/{business_id}"): {
@@ -206,8 +206,8 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
         "service_level_auth": None,
     },
     ("PATCH", "/api/v1/platform/outlets/{outlet_id}"): {
-        "router": "profile_router",
-        "allowed_roles": {"owner", "admin", "operator"},
+        "router": "operations_router",
+        "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
     },
 }
@@ -296,17 +296,6 @@ def list_admins(db: Session = Depends(get_db)):
 def list_operators(db: Session = Depends(get_db)):
     users = platform_service.list_platform_operators(db)
     return [PlatformAdminUserOut.model_validate(u) for u in users]
-
-
-@commercial_router.get("/plans", response_model=List[PlanRead])
-def list_plans(db: Session = Depends(get_db)):
-    plans = platform_service.list_canonical_plans(db)
-    return [PlanRead.model_validate(p) for p in plans]
-
-
-@commercial_router.get("/businesses", response_model=List[PlatformBusinessOut])
-def list_businesses(db: Session = Depends(get_db)):
-    return platform_service.list_platform_businesses(db)
 
 
 @commercial_router.get("/businesses/{business_id}/subscriptions", response_model=List[BusinessSubscriptionRead])
@@ -574,9 +563,35 @@ def update_business_profile(
     return PlatformBusinessOut.model_validate(biz)
 
 
+@operations_router.patch("/outlets/{outlet_id}", response_model=PlatformOutletDetailOut)
+def update_outlet_profile(
+    outlet_id: uuid.UUID,
+    data: PlatformOutletProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    outlet = platform_service.update_outlet_profile(
+        db, outlet_id=outlet_id, data=data, actor_user_id=current_user.id
+    )
+    out = PlatformOutletDetailOut.model_validate(outlet)
+    out.business_name = outlet.business.name if outlet.business else None
+    return out
+
+
 # ==============================================================================
-# Profile Router Endpoints (owner, admin, operator)
+# Profile Router Endpoints (owner, admin, operator — read-only for operators)
 # ==============================================================================
+
+@profile_router.get("/businesses", response_model=List[PlatformBusinessOut])
+def list_businesses(db: Session = Depends(get_db)):
+    return platform_service.list_platform_businesses(db)
+
+
+@profile_router.get("/plans", response_model=List[PlanRead])
+def list_plans(db: Session = Depends(get_db)):
+    plans = platform_service.list_canonical_plans(db)
+    return [PlanRead.model_validate(p) for p in plans]
+
 
 @profile_router.get("/businesses/{business_id}", response_model=Union[PlatformBusinessOut, PlatformBusinessProfileOut])
 def get_business(
@@ -597,21 +612,6 @@ def get_outlet(
     db: Session = Depends(get_db)
 ):
     outlet = platform_service.get_platform_outlet(db, outlet_id=outlet_id)
-    out = PlatformOutletDetailOut.model_validate(outlet)
-    out.business_name = outlet.business.name if outlet.business else None
-    return out
-
-
-@profile_router.patch("/outlets/{outlet_id}", response_model=PlatformOutletDetailOut)
-def update_outlet_profile(
-    outlet_id: uuid.UUID,
-    data: PlatformOutletProfileUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    outlet = platform_service.update_outlet_profile(
-        db, outlet_id=outlet_id, data=data, actor_user_id=current_user.id
-    )
     out = PlatformOutletDetailOut.model_validate(outlet)
     out.business_name = outlet.business.name if outlet.business else None
     return out

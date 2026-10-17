@@ -20,17 +20,18 @@ from app.modules.menus import platform_service
 from app.core import r2_storage
 
 # Dedicated Platform Menu Sub-Router
-# Accessible strictly by Platform Owner, Platform Admin, and Platform Operator.
-platform_menu_router = APIRouter(
-    dependencies=[
-        Depends(RequirePlatformRole(["owner", "admin", "operator"])),
-    ]
-)
+# Per Owner Decision 004 (strict read-only Operators):
+#   - Menu reads are accessible by Platform Owner, Platform Admin, and Platform Operator.
+#   - Menu mutations are restricted to Platform Owner and Platform Admin.
+# Role guards are declared per route (not router-wide) because read and write
+# role sets differ; see IMPLEMENTED_PLATFORM_ROUTE_POLICIES in platform.py.
+platform_menu_router = APIRouter()
 
 
 @platform_menu_router.get(
     "/outlets/{outlet_id}/menu",
     response_model=AdminOutletMenuResponse,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin", "operator"]))],
 )
 def get_outlet_menu(
     outlet_id: uuid.UUID,
@@ -42,6 +43,7 @@ def get_outlet_menu(
 @platform_menu_router.post(
     "/outlets/{outlet_id}/menu/categories",
     response_model=AdminMenuCategorySchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def create_category(
     outlet_id: uuid.UUID,
@@ -58,6 +60,7 @@ def create_category(
 @platform_menu_router.patch(
     "/outlets/{outlet_id}/menu/categories/{category_id}",
     response_model=AdminMenuCategorySchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def update_category(
     outlet_id: uuid.UUID,
@@ -79,6 +82,7 @@ def update_category(
 @platform_menu_router.post(
     "/outlets/{outlet_id}/menu/items",
     response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def create_menu_item(
     outlet_id: uuid.UUID,
@@ -95,6 +99,7 @@ def create_menu_item(
 @platform_menu_router.patch(
     "/outlets/{outlet_id}/menu/items/{item_id}",
     response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def update_menu_item(
     outlet_id: uuid.UUID,
@@ -116,6 +121,7 @@ def update_menu_item(
 @platform_menu_router.patch(
     "/outlets/{outlet_id}/menu/items/{item_id}/availability",
     response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def toggle_item_availability(
     outlet_id: uuid.UUID,
@@ -137,6 +143,7 @@ def toggle_item_availability(
 @platform_menu_router.post(
     "/outlets/{outlet_id}/menu/items/{item_id}/image",
     response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def upload_item_image(
     outlet_id: uuid.UUID,
@@ -161,6 +168,7 @@ def upload_item_image(
 @platform_menu_router.delete(
     "/outlets/{outlet_id}/menu/items/{item_id}/image",
     response_model=AdminMenuItemSchema,
+    dependencies=[Depends(RequirePlatformRole(["owner", "admin"]))],
 )
 def delete_item_image(
     outlet_id: uuid.UUID,

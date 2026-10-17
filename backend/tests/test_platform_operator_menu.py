@@ -151,18 +151,99 @@ def _get_auth_headers(client: TestClient, email: str, password: str = "password1
 # 1. Authorization: Operator, Admin, Owner & Legacy Admin on Platform Menu Endpoints
 # ==============================================================================
 
-def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: dict, db_session: Session):
+def test_operator_menu_read_allowed_writes_forbidden(client: TestClient, test_setup: dict, db_session: Session):
+    """Owner Decision 004: Operators may read outlet menus but must not mutate them."""
     headers = _get_auth_headers(client, "operator_menu@test.com")
     outlet_id = str(test_setup["outlet_a"].id)
+    cat_id = str(test_setup["cat_a"].id)
+    item_id = str(test_setup["item_a"].id)
+    fake_png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
 
-    # 1. GET /outlets/{id}/menu
+    # 1. GET /outlets/{id}/menu -> 200 (read allowed)
     get_resp = client.get(f"/api/v1/platform/outlets/{outlet_id}/menu", headers=headers)
     assert get_resp.status_code == 200
     data = get_resp.json()
     assert data["outlet_id"] == outlet_id
     assert len(data["categories"]) >= 1
 
-    # 2. POST /outlets/{id}/menu/categories
+    # 2. POST /outlets/{id}/menu/categories -> 403 (write forbidden)
+    cat_resp = client.post(
+        f"/api/v1/platform/outlets/{outlet_id}/menu/categories",
+        headers=headers,
+        json={"name": "Desserts", "description": "Sweet treats", "sort_order": 5, "is_active": True},
+    )
+    assert cat_resp.status_code == 403
+
+    # 3. PATCH /outlets/{id}/menu/categories/{cat_id} -> 403
+    patch_cat_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/menu/categories/{cat_id}",
+        headers=headers,
+        json={"name": "Artisan Desserts", "sort_order": 6},
+    )
+    assert patch_cat_resp.status_code == 403
+
+    # 4. POST /outlets/{id}/menu/items -> 403
+    item_resp = client.post(
+        f"/api/v1/platform/outlets/{outlet_id}/menu/items",
+        headers=headers,
+        json={
+            "category_id": cat_id,
+            "name": "Chocolate Lava Cake",
+            "description": "Warm molten cake",
+            "price": "180.00",
+            "is_available": True,
+            "is_active": True,
+            "sort_order": 1,
+        },
+    )
+    assert item_resp.status_code == 403
+
+    # 5. PATCH /outlets/{id}/menu/items/{item_id} -> 403
+    patch_item_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}",
+        headers=headers,
+        json={"price": "195.00"},
+    )
+    assert patch_item_resp.status_code == 403
+
+    # 6. PATCH /outlets/{id}/menu/items/{item_id}/availability -> 403
+    avail_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/availability",
+        headers=headers,
+        json={"is_available": False},
+    )
+    assert avail_resp.status_code == 403
+
+    # 7. POST /outlets/{id}/menu/items/{item_id}/image -> 403
+    with patch("app.core.r2_storage.upload_item_image", return_value="outlets/test/lava_cake.png") as mock_upload:
+        img_resp = client.post(
+            f"/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image",
+            headers=headers,
+            files={"file": ("lava_cake.png", fake_png_bytes, "image/png")},
+        )
+        assert img_resp.status_code == 403
+        mock_upload.assert_not_called()
+
+    # 8. DELETE /outlets/{id}/menu/items/{item_id}/image -> 403
+    with patch("app.core.r2_storage.delete_object") as mock_del:
+        del_img_resp = client.delete(
+            f"/api/v1/platform/outlets/{outlet_id}/menu/items/{item_id}/image",
+            headers=headers,
+        )
+        assert del_img_resp.status_code == 403
+        mock_del.assert_not_called()
+
+    # Verify no menu mutations were persisted by the rejected operator attempts
+    names = [c.name for c in db_session.query(MenuCategory).filter(MenuCategory.outlet_id == test_setup["outlet_a"].id).all()]
+    assert "Desserts" not in names and "Artisan Desserts" not in names
+
+
+def test_admin_platform_menu_full_lifecycle(client: TestClient, test_setup: dict, db_session: Session):
+    """Full platform-menu write lifecycle retained for Platform Admin (Owner Decision 004: writes are owner/admin only)."""
+    headers = _get_auth_headers(client, "admin_menu@test.com")
+    outlet_id = str(test_setup["outlet_a"].id)
+
+    # 1. POST /outlets/{id}/menu/categories
     cat_resp = client.post(
         f"/api/v1/platform/outlets/{outlet_id}/menu/categories",
         headers=headers,
@@ -173,7 +254,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
     assert cat_data["name"] == "Desserts"
     new_cat_id = cat_data["id"]
 
-    # 3. PATCH /outlets/{id}/menu/categories/{cat_id}
+    # 2. PATCH /outlets/{id}/menu/categories/{cat_id}
     patch_cat_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet_id}/menu/categories/{new_cat_id}",
         headers=headers,
@@ -182,7 +263,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
     assert patch_cat_resp.status_code == 200
     assert patch_cat_resp.json()["name"] == "Artisan Desserts"
 
-    # 4. POST /outlets/{id}/menu/items
+    # 3. POST /outlets/{id}/menu/items
     item_resp = client.post(
         f"/api/v1/platform/outlets/{outlet_id}/menu/items",
         headers=headers,
@@ -202,7 +283,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
     assert Decimal(str(item_data["price"])) == Decimal("180.00")
     new_item_id = item_data["id"]
 
-    # 5. PATCH /outlets/{id}/menu/items/{item_id}
+    # 4. PATCH /outlets/{id}/menu/items/{item_id}
     patch_item_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet_id}/menu/items/{new_item_id}",
         headers=headers,
@@ -211,7 +292,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
     assert patch_item_resp.status_code == 200
     assert Decimal(str(patch_item_resp.json()["price"])) == Decimal("195.00")
 
-    # 6. PATCH /outlets/{id}/menu/items/{item_id}/availability
+    # 5. PATCH /outlets/{id}/menu/items/{item_id}/availability
     avail_resp = client.patch(
         f"/api/v1/platform/outlets/{outlet_id}/menu/items/{new_item_id}/availability",
         headers=headers,
@@ -220,7 +301,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
     assert avail_resp.status_code == 200
     assert avail_resp.json()["is_available"] is False
 
-    # 7. POST /outlets/{id}/menu/items/{item_id}/image
+    # 6. POST /outlets/{id}/menu/items/{item_id}/image
     fake_png_bytes = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
     with patch("app.core.r2_storage.upload_item_image", return_value="outlets/test/lava_cake.png") as mock_upload, \
          patch("app.core.r2_storage.delete_object") as mock_del:
@@ -233,7 +314,7 @@ def test_operator_platform_menu_full_lifecycle(client: TestClient, test_setup: d
         mock_upload.assert_called_once()
         assert "lava_cake.png" in img_resp.json()["image_url"]
 
-    # 8. DELETE /outlets/{id}/menu/items/{item_id}/image
+    # 7. DELETE /outlets/{id}/menu/items/{item_id}/image
     with patch("app.core.r2_storage.delete_object") as mock_del:
         del_img_resp = client.delete(
             f"/api/v1/platform/outlets/{outlet_id}/menu/items/{new_item_id}/image",
@@ -298,7 +379,9 @@ def test_unauthenticated_and_tenant_only_callers_rejected(client: TestClient, te
 # ==============================================================================
 
 def test_cross_outlet_isolation_and_reassignment_validation(client: TestClient, test_setup: dict):
-    headers = _get_auth_headers(client, "operator_menu@test.com")
+    # Exercised with an Admin caller; handler-level isolation is independent of
+    # the Operator read-only restriction (Owner Decision 004).
+    headers = _get_auth_headers(client, "admin_menu@test.com")
     outlet_a_id = str(test_setup["outlet_a"].id)
     outlet_b_id = str(test_setup["outlet_b"].id)
     cat_b_id = str(test_setup["cat_b"].id)
@@ -388,8 +471,8 @@ def test_operator_denied_on_commercial_governance_and_tenant_routes(client: Test
     admin_user_id = str(test_setup["admin"].id)
 
     # 1. Commercial Endpoints -> 403 Forbidden
-    assert client.get("/api/v1/platform/businesses", headers=headers).status_code == 403
-    assert client.get("/api/v1/platform/plans", headers=headers).status_code == 403
+    # (GET /businesses and GET /plans are now operator-readable — see
+    # test_operator_reads_businesses_and_plans; Owner Decision 004)
     assert client.get("/api/v1/platform/admins", headers=headers).status_code == 403
     assert client.get("/api/v1/platform/audit-logs", headers=headers).status_code == 403
     assert client.get(f"/api/v1/platform/businesses/{biz_id}/subscriptions", headers=headers).status_code == 403
@@ -411,12 +494,26 @@ def test_operator_denied_on_commercial_governance_and_tenant_routes(client: Test
     assert client.post(f"/api/v1/outlets/{outlet_id}/categories", headers=headers, json={"name": "Cat"}).status_code == 403
 
 
+def test_operator_reads_businesses_and_plans(client: TestClient, test_setup: dict):
+    """Operator may read the business directory and plan catalog (Owner Decision 004)."""
+    headers = _get_auth_headers(client, "operator_menu@test.com")
+
+    biz_resp = client.get("/api/v1/platform/businesses", headers=headers)
+    assert biz_resp.status_code == 200
+    assert any(b["id"] == str(test_setup["biz_a"].id) for b in biz_resp.json())
+
+    plans_resp = client.get("/api/v1/platform/plans", headers=headers)
+    assert plans_resp.status_code == 200
+    assert len(plans_resp.json()) >= 1
+
+
 # ==============================================================================
 # 5. Platform Audit Log Persistence & Failure Atomicity
 # ==============================================================================
 
 def test_platform_audit_log_persistence_and_failure_atomicity(client: TestClient, test_setup: dict, db_session: Session):
-    headers = _get_auth_headers(client, "operator_menu@test.com")
+    # Exercised with an Admin caller (menu writes are owner/admin-only, Owner Decision 004).
+    headers = _get_auth_headers(client, "admin_menu@test.com")
     outlet_id = str(test_setup["outlet_a"].id)
     cat_id = str(test_setup["cat_a"].id)
     item_id = str(test_setup["item_a"].id)
@@ -446,7 +543,7 @@ def test_platform_audit_log_persistence_and_failure_atomicity(client: TestClient
     assert audit_entry is not None
     assert audit_entry.outlet_id == test_setup["outlet_a"].id
     assert audit_entry.business_id == test_setup["biz_a"].id
-    assert audit_entry.actor_user_id == test_setup["operator"].id
+    assert audit_entry.actor_user_id == test_setup["admin"].id
     assert audit_entry.metadata_json["source"] == "platform_operator"
 
     # 2. Failed mutation creates no audit log entry
@@ -470,7 +567,8 @@ def test_platform_audit_log_persistence_and_failure_atomicity(client: TestClient
 # ==============================================================================
 
 def test_r2_upload_rollback_on_database_failure(client: TestClient, test_setup: dict):
-    headers = _get_auth_headers(client, "operator_menu@test.com")
+    # Exercised with an Admin caller (menu writes are owner/admin-only).
+    headers = _get_auth_headers(client, "admin_menu@test.com")
     outlet_id = str(test_setup["outlet_a"].id)
     item_id = str(test_setup["item_a"].id)
     fake_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
@@ -491,7 +589,8 @@ def test_r2_upload_rollback_on_database_failure(client: TestClient, test_setup: 
 
 def test_r2_deletion_post_commit_failure_handled_gracefully(client: TestClient, test_setup: dict, db_session: Session, caplog: pytest.LogCaptureFixture):
     import logging
-    headers = _get_auth_headers(client, "operator_menu@test.com")
+    # Exercised with an Admin caller (menu writes are owner/admin-only).
+    headers = _get_auth_headers(client, "admin_menu@test.com")
     outlet_id = str(test_setup["outlet_a"].id)
     item = test_setup["item_a"]
     item.image_url = "outlets/test/existing.png"
@@ -535,13 +634,14 @@ def test_inactive_outlet_policy_read_write_asymmetry(client: TestClient, test_se
     """
     Documents and verifies the known limitation (L-01):
     - Platform mutations (create/update category/item) validate outlet/business existence
-      without filtering on `Outlet.status == 'active'`, allowing operators to configure menus
-      for draft/inactive outlets during onboarding.
+      without filtering on `Outlet.status == 'active'`, allowing owners/admins to configure
+      menus for draft/inactive outlets during onboarding.
     - Conversely, `get_platform_outlet_menu` delegates to `admin_service.get_admin_menu`,
       which strictly enforces `Outlet.status == 'active'` and returns 404 for inactive outlets.
     Aligning this policy across read and write operations requires a dedicated product decision.
+    Exercised with an Admin caller (menu writes are owner/admin-only, Owner Decision 004).
     """
-    headers = _get_auth_headers(client, "operator_menu@test.com")
+    headers = _get_auth_headers(client, "admin_menu@test.com")
     biz = test_setup["biz_a"]
 
     # Create an inactive outlet under an active business

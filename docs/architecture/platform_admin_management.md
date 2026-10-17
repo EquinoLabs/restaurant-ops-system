@@ -1,5 +1,7 @@
 # Platform-Admin Management & Last-Admin Protection Architecture
 
+> **Current-versus-target note (2026-10-17):** This document describes the shipped **legacy boolean-flag** platform-admin management endpoints (`is_platform_admin` grant/revoke with last-active-admin protection). Since this document was written, the three-tier platform plane (`platform_roles` + `RequirePlatformRole` in `backend/app/api/deps.py`, governance routers in `backend/app/api/v1/platform.py`) has been implemented and is the primary platform authorization mechanism. The grant/revoke endpoints and audit actions described here remain shipped and accurate for the legacy flags; where this document says authorization is `get_current_platform_admin`, treat that as the historical dependency name — current platform routers enforce `RequirePlatformRole`. The authoritative Stage 3 target architecture (business ownership, outlet-scoped subscriptions, read-only Operators) is `docs/architecture/stage_3_ownership_subscriptions_architecture.md`. This document does not describe Stage 3 features, which are **not implemented**.
+
 ## 1. Overview
 
 ROMS provides secure management of platform administrator privileges, ensuring system-wide administrative governance and preventing accidental platform lockouts via concurrency-safe last-active-admin protection.
@@ -18,7 +20,7 @@ Users with `is_platform_admin == True` whose account `status` is set to `"suspen
 
 ## 3. Endpoints & Authorization Rules
 
-All platform admin management endpoints require `get_current_platform_admin` dependency authorization (which enforces active platform admin authentication via JWT tokens):
+All platform admin management endpoints require active-platform-administrator authentication via JWT tokens (historically the `get_current_platform_admin` dependency; current platform-plane routers enforce `RequirePlatformRole` — see the note above):
 
 | Endpoint Path | Method | Description | Response Schema |
 | :--- | :--- | :--- | :--- |
@@ -82,3 +84,14 @@ In PostgreSQL, `SELECT ... FOR UPDATE` locks the selected rows until the current
 ## 7. Known Testing & Operational Limitations
 
 - **Concurrency Simulation in In-Memory SQLite**: Unit tests run against SQLite in-memory with `StaticPool`. SQLite enforces single-writer database locking. Full PostgreSQL `SELECT FOR UPDATE` row locking is verified in PostgreSQL deployment environments.
+
+---
+
+## 8. Stage 3 Alignment Notes (Target — Not Implemented)
+
+The following corrections and boundaries are recorded for consistency with Owner Decisions 002–004 and `docs/architecture/stage_3_ownership_subscriptions_architecture.md`. Nothing in this section is shipped.
+
+1. **Business ownership ≠ platform-plane ownership.** The ownership-transfer ceremony and single-active-owner invariant in the three-tier model concern the **platform plane** (`platform.owner.transfer`). **Business ownership** (one owner per business, transfer demotes the previous owner to manager) is a separate, tenant-level concept using the audit action `platform.business_owner.transfer`. The two must never be conflated in logs, endpoints, or documentation.
+2. **Initial owner passwords.** Business creation sets the initial owner password via the Platform Admin portal (Decision 003). No forced first-login change; no email/reset/invitation flows in this phase. Passwords are never logged, never audited, and never echoed in error responses — consistent with the "No passwords or secrets are recorded" rule in §5.
+3. **Platform Operator permissions.** Operators are strictly read-only (Decision 004). This document does not grant Operators any write capability; the Team administration endpoints above are Owner/Admin-only.
+4. **Zero-owner businesses are report-only.** Distinct from the last-active-admin protection in §4: the §4 invariant protects the platform plane; tenant businesses with zero owners are detected by reconciliation reporting and are **not** auto-repaired.
