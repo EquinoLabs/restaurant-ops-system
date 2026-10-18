@@ -101,7 +101,7 @@ export const StateBlock: React.FC<StateBlockProps> = ({
       <div className="flex w-full max-w-md flex-col items-center rounded-md border border-ops-border bg-white p-8 text-center shadow-none">
         <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-ops-canvas text-ops-text-secondary">
           <Icon
-            className={`h-5 w-5 ${isLoadingLike ? 'animate-spin' : ''}`}
+            className={`h-5 w-5 ${isLoadingLike ? 'animate-spin motion-reduce:animate-none' : ''}`}
             aria-hidden="true"
           />
         </div>
@@ -178,7 +178,7 @@ export const InlineStateBanner: React.FC<InlineStateBannerProps> = ({
       <div className="flex items-center gap-2.5">
         <Icon
           className={`h-4 w-4 shrink-0 text-ops-text-secondary ${
-            variant === 'unknown-outcome' ? 'animate-spin text-ops-accent' : ''
+            variant === 'unknown-outcome' ? 'animate-spin motion-reduce:animate-none text-ops-accent' : ''
           }`}
           aria-hidden="true"
         />

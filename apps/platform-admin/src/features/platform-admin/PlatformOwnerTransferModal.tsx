@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { PlatformAdminUser, UserMe } from '@roms/shared-types';
 import { transferPlatformOwner, useAuth } from '@roms/api-client';
 import { AlertTriangle, Eye, EyeOff, Info, Loader2, X } from 'lucide-react';
-import { Button } from '../../components/ops-ui';
+import { Button, opsSelectClass } from '../../components/ops-ui';
 
 interface PlatformOwnerTransferModalProps {
   isOpen: boolean;
@@ -78,7 +78,7 @@ export const PlatformOwnerTransferModal: React.FC<PlatformOwnerTransferModalProp
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div
-        className="absolute inset-0 bg-[rgba(31,41,51,0.40)]"
+        className="absolute inset-0 bg-[rgba(31,41,51,0.40)] animate-ops-fade-in motion-reduce:animate-none"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -86,7 +86,7 @@ export const PlatformOwnerTransferModal: React.FC<PlatformOwnerTransferModalProp
         role="dialog"
         aria-modal="true"
         aria-labelledby="transfer-owner-title"
-        className="relative w-full max-w-lg overflow-hidden rounded-md border border-ops-border bg-white shadow-ops-l2"
+        className="relative w-full max-w-lg overflow-hidden rounded-md border border-ops-border bg-white shadow-ops-l2 animate-ops-dialog-enter motion-reduce:animate-none"
       >
         <div className="flex items-start justify-between border-b border-ops-border p-5">
           <div>
@@ -177,7 +177,7 @@ export const PlatformOwnerTransferModal: React.FC<PlatformOwnerTransferModalProp
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="transfer-successor-select"
-              className="text-xs font-semibold text-ops-text-secondary"
+              className="text-xs font-medium text-ops-text-secondary"
             >
               Select Successor Candidate
             </label>
@@ -192,7 +192,7 @@ export const PlatformOwnerTransferModal: React.FC<PlatformOwnerTransferModalProp
                 required
                 value={targetUserId}
                 onChange={(e) => setTargetUserId(e.target.value)}
-                className="h-8 w-full rounded-md border border-ops-border bg-white px-2.5 text-[13px] text-ops-text-primary focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                className={opsSelectClass}
               >
                 <option value="">-- Choose active successor candidate --</option>
                 {eligibleCandidates.map((c) => (
@@ -207,7 +207,7 @@ export const PlatformOwnerTransferModal: React.FC<PlatformOwnerTransferModalProp
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="transfer-password"
-              className="text-xs font-semibold text-ops-text-secondary"
+              className="text-xs font-medium text-ops-text-secondary"
             >
               Re-enter Current Platform Owner Password
             </label>

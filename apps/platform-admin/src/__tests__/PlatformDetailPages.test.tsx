@@ -16,11 +16,11 @@ vi.mock('@roms/api-client', async () => {
     fetchPlatformBusiness: vi.fn(),
     updatePlatformBusinessProfile: vi.fn(),
     createPlatformOutlet: vi.fn(),
-    assignPlatformOwner: vi.fn(),
     fetchPlatformOutlet: vi.fn(),
     updatePlatformOutletProfile: vi.fn(),
     fetchBusinessEntitlements: vi.fn(),
     fetchPlatformAuditLogs: vi.fn(),
+    fetchBusinessSubscriptions: vi.fn().mockResolvedValue([]),
   };
 });
 
@@ -121,13 +121,13 @@ describe('BusinessDetailPage', () => {
     });
   });
 
-  it('navigates to outlet detail when Manage is clicked', async () => {
+  it('navigates to outlet detail when outlet row is clicked', async () => {
     (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
 
     renderBusinessDetail();
 
-    const manageBtn = await screen.findByText('Manage');
-    fireEvent.click(manageBtn);
+    const outletName = await screen.findByText('Main Dining');
+    fireEvent.click(outletName);
 
     expect(screen.getByText('Outlet Detail Route')).toBeDefined();
   });
@@ -168,23 +168,6 @@ describe('BusinessDetailPage', () => {
     await waitFor(() => {
       expect(apiClient.createPlatformOutlet).toHaveBeenCalledWith('biz-1', expect.objectContaining({ name: 'New Branch', public_slug: 'new-branch' }), 'tok-123');
       expect(screen.getByText('Outlet Detail Route')).toBeDefined();
-    });
-  });
-
-  it('assigns an owner via assignPlatformOwner', async () => {
-    (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
-    (apiClient.assignPlatformOwner as any).mockResolvedValue({});
-
-    renderBusinessDetail();
-
-    fireEvent.click(await screen.findByText('Assign Owner'));
-    fireEvent.change(screen.getByPlaceholderText('e.g. Ramesh Kumar'), { target: { value: 'Ramesh Kumar' } });
-    fireEvent.change(screen.getByPlaceholderText('owner@restaurant.com'), { target: { value: 'owner@test.com' } });
-    fireEvent.change(screen.getByPlaceholderText('••••••••••••'), { target: { value: 'supersecret1' } });
-    fireEvent.click(screen.getByText('Assign Owner Account'));
-
-    await waitFor(() => {
-      expect(apiClient.assignPlatformOwner).toHaveBeenCalledWith('biz-1', expect.objectContaining({ outlet_id: 'o-1', email: 'owner@test.com' }), 'tok-123');
     });
   });
 
@@ -239,16 +222,30 @@ describe('BusinessDetailPage', () => {
     });
   });
 
-  it('shows the subscription summary and link to the Subscriptions page', async () => {
+  it('shows the subscription summary with outlet-scoped messaging', async () => {
     (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
 
     renderBusinessDetail();
 
     fireEvent.click(await screen.findByRole('tab', { name: 'Subscription' }));
 
-    expect(screen.getByText('Outlet limit')).toBeDefined();
-    expect(screen.getByText('1 / 2 used')).toBeDefined();
-    expect(screen.getByText('Open Subscriptions')).toBeDefined();
+    expect(screen.getByText('Managed per outlet')).toBeDefined();
+    expect(screen.getByText('Active outlets')).toBeDefined();
+    expect(screen.getAllByText('Open Subscriptions').length).toBeGreaterThan(0);
+    expect(await screen.findByText(/Subscription Lifecycle & History/i)).toBeDefined();
+    expect(screen.getByText(/Outlet Subscriptions/i)).toBeDefined();
+  });
+
+  it('restricts editing for operator role', async () => {
+    mockUseAuth.mockReturnValue({ token: 'tok-123', user: { is_platform_admin: false, platform_role: 'operator' } });
+    (apiClient.fetchPlatformBusiness as any).mockResolvedValue(sampleBusiness);
+
+    renderBusinessDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Valley Retreat')).toBeDefined();
+      expect(screen.queryByRole('button', { name: 'Edit details' })).toBeNull();
+    });
   });
 });
 
@@ -378,7 +375,8 @@ describe('OutletDetailPage', () => {
       expect(screen.getByText('POS Ordering')).toBeDefined();
       expect(screen.getByText('Granted')).toBeDefined();
       expect(screen.getByText('Denied')).toBeDefined();
-      expect(screen.getByText(/outlet-level subscription write API/)).toBeDefined();
+      expect(screen.getByText(/Subscriptions are canonical and managed independently per outlet/)).toBeDefined();
+      expect(screen.getByRole('button', { name: 'Manage Subscription' })).toBeDefined();
     });
   });
 
@@ -412,5 +410,19 @@ describe('OutletDetailPage', () => {
     expect(screen.getByDisplayValue('Main Dining')).toBeDefined();
     expect(screen.queryByText('You have unsaved changes')).toBeNull();
     expect(apiClient.updatePlatformOutletProfile).not.toHaveBeenCalled();
+  });
+
+  it('restricts editing for operator role', async () => {
+    mockUseAuth.mockReturnValue({ token: 'tok-123', user: { is_platform_admin: false, platform_role: 'operator' } });
+    (apiClient.fetchPlatformOutlet as any).mockResolvedValue(sampleOutlet);
+
+    renderOutletDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Main Dining').length).toBeGreaterThan(0);
+    });
+
+    const nameInput = screen.getByDisplayValue('Main Dining') as HTMLInputElement;
+    expect(nameInput.disabled).toBe(true);
   });
 });

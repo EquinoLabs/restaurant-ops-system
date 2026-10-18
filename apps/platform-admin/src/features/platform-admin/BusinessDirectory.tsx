@@ -10,7 +10,7 @@ import {
   type DataTableColumn,
   type StatusTone,
 } from '../../components/ops-ui';
-import { opsInputClass } from '../../components/ops-ui/FormField';
+import { opsInputClass, opsSelectClass } from '../../components/ops-ui/FormField';
 
 export interface BusinessDirectoryProps {
   businesses: PlatformBusiness[];
@@ -63,6 +63,10 @@ export function formatCreatedAt(iso: string): string {
   });
 }
 
+export function handleBusinessRowClick(businessId: string): void {
+  window.location.href = `/platform/businesses/${businessId}`;
+}
+
 export function subscriptionTone(status?: string): StatusTone {
   switch (status) {
     case 'active':
@@ -109,6 +113,10 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
   onOpenProvisionModal,
   onViewBusiness,
 }) => {
+  const handleRowClick = (biz: PlatformBusiness) => {
+    onViewBusiness?.(biz.id);
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [subscriptionFilter, setSubscriptionFilter] = useState<string>('all');
@@ -131,7 +139,8 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
     {
       key: 'business',
       header: 'Business',
-      width: '32%',
+      width: '34%',
+      getTitle: (biz) => biz.name,
       render: (biz) => (
         <div className="flex min-w-0 flex-col">
           <span className="truncate font-medium text-ops-text-primary">{biz.name}</span>
@@ -144,7 +153,7 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
     {
       key: 'status',
       header: 'Status',
-      width: '22%',
+      width: '26%',
       render: (biz) => (
         <div className="flex flex-wrap items-center gap-1.5">
           <StatusBadge tone={accountTone(biz.status)} label={accountLabel(biz.status)} />
@@ -158,7 +167,8 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
     {
       key: 'outlets',
       header: 'Outlets',
-      width: '16%',
+      width: '20%',
+      tabular: true,
       render: (biz) => {
         const outlets = biz.outlets || [];
         const activeOutlets = outlets.filter((o) => o.status === 'active').length;
@@ -172,24 +182,10 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
     {
       key: 'created',
       header: 'Created',
-      width: '14%',
+      width: '20%',
+      tabular: true,
       render: (biz) => (
-        <span className="text-ops-text-secondary">{formatCreatedAt(biz.created_at)}</span>
-      ),
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      align: 'right',
-      width: '16%',
-      render: (biz) => (
-        <Button
-          variant="secondary"
-          onClick={() => onViewBusiness?.(biz.id)}
-          disabled={!onViewBusiness}
-        >
-          View
-        </Button>
+        <span className="tabular-nums text-ops-text-secondary">{formatCreatedAt(biz.created_at)}</span>
       ),
     },
   ];
@@ -277,7 +273,7 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className={opsInputClass}
+            className={opsSelectClass}
             aria-label="Filter by Operational Status"
           >
             <option value="all">All account statuses</option>
@@ -288,7 +284,7 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
           <select
             value={subscriptionFilter}
             onChange={(e) => setSubscriptionFilter(e.target.value)}
-            className={opsInputClass}
+            className={opsSelectClass}
             aria-label="Filter by Subscription Status"
           >
             <option value="all">All subscriptions</option>
@@ -344,6 +340,7 @@ export const BusinessDirectory: React.FC<BusinessDirectoryProps> = ({
           rows={filteredBusinesses}
           rowKey={(biz) => biz.id}
           minWidth="720px"
+          onRowClick={handleRowClick}
           footer={
             <span>
               {filteredBusinesses.length} of {businesses.length} businesses

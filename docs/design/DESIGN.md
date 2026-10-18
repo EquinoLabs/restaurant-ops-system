@@ -1,53 +1,26 @@
 ---
 name: Operations Console
 colors:
-  surface: '#F6F7F9'
-  surface-dim: '#d1dbe8'
-  surface-bright: '#f7f9ff'
-  surface-container-lowest: '#ffffff'
-  surface-container-low: '#F6F7F9'
-  surface-container: '#EEF0F3'
-  surface-container-high: '#dfe9f7'
-  surface-container-highest: '#d9e3f1'
-  on-surface: '#121d26'
-  on-surface-variant: '#434653'
-  inverse-surface: '#27313c'
-  inverse-on-surface: '#e8f2ff'
-  outline: '#747685'
-  outline-variant: '#c4c6d6'
-  surface-tint: '#2756c9'
-  primary: '#003ba7'
-  on-primary: '#ffffff'
-  primary-container: '#2554c7'
-  on-primary-container: '#cad5ff'
-  inverse-primary: '#b4c4ff'
-  secondary: '#53606d'
-  on-secondary: '#ffffff'
-  secondary-container: '#d6e4f4'
-  on-secondary-container: '#596673'
-  tertiary: '#792d00'
-  on-tertiary: '#ffffff'
-  tertiary-container: '#9f3e00'
-  on-tertiary-container: '#ffcab4'
-  error: '#ba1a1a'
-  on-error: '#ffffff'
-  error-container: '#ffdad6'
-  on-error-container: '#93000a'
-  primary-fixed: '#dbe1ff'
-  primary-fixed-dim: '#b4c4ff'
-  on-primary-fixed: '#00174c'
-  on-primary-fixed-variant: '#003daa'
-  secondary-fixed: '#d6e4f4'
-  secondary-fixed-dim: '#bac8d8'
-  on-secondary-fixed: '#101d28'
-  on-secondary-fixed-variant: '#3b4855'
-  tertiary-fixed: '#ffdbcc'
-  tertiary-fixed-dim: '#ffb695'
-  on-tertiary-fixed: '#351000'
-  on-tertiary-fixed-variant: '#7b2e00'
-  background: '#F6F7F9'
-  on-background: '#121d26'
-  surface-variant: '#d9e3f1'
+  canvas: '#F6F7F9'
+  surface: '#FFFFFF'
+  border: '#E3E6EA'
+  divider: '#EEF0F3'
+  text-primary: '#1F2933'
+  text-secondary: '#616E7C'
+  text-disabled: '#9AA5B1'
+  accent: '#2554C7'
+  accent-hover: '#1D44A6'
+  accent-active: '#183A8F'
+  accent-focus: 'rgba(37, 84, 199, 0.24)'
+  status-active-bg: '#E6F4EC'
+  status-active-text: '#1B7F4B'
+  status-pending-bg: '#FFF4DB'
+  status-pending-text: '#8A5A00'
+  status-critical-bg: '#FDECEA'
+  status-critical-text: '#B42318'
+  status-neutral-bg: '#EEF0F3'
+  status-neutral-text: '#52606D'
+  error: '#B42318'
 typography:
   display-page-title:
     fontFamily: Inter
@@ -124,13 +97,20 @@ spacing:
 
 ## Brand & Style
 
-This design system establishes an ultra-efficient, dense internal control panel tailored for enterprise food & beverage operations, multi-unit governance, and fast-paced live service management. 
+This design system establishes an ultra-efficient, dense internal control panel tailored for administrative consoles, multi-unit governance, and operational dashboards (`apps/platform-admin` and restaurant back-office management).
 
 ### Visual Archetype & Mood
 - **Style:** High-density, utilitarian SaaS administrative interface drawn from the structural precision of Stripe Dashboard, Zendesk, and Shopify Admin.
 - **Tone:** Methodical, neutral, unambiguous, and quiet. The interface acts as a silent frame for high-velocity operational data.
-- **Mode:** Exclusively light mode. No dark themes, ambient glows, heavy drop shadows, decorative cards, glassmorphism, or expressive novelty elements.
+- **Mode:** Exclusively light mode for administrative portals. No dark themes, ambient glows, heavy drop shadows, decorative cards, glassmorphism, or expressive novelty elements.
 - **Iconography:** Monoline 16px and 20px geometric icons exclusively, rendered in the secondary text tone `#616E7C` with a uniform 1.5px stroke. Never use emojis, saturated badges, or decorative graphic fills.
+- **Utility Motion:** Subtle, composite-only CSS transitions (<= 150ms ease-out) are permitted for overlay enter states (slide-over drawers sliding from right, dialogs scaling 0.98 to 1.0, tab panels fading opacity). To maintain synchronous testability and immediate responsiveness, unmounting on close remains instantaneous with no delayed exit animations.
+
+### Operational Exception: Live Service & Floor Operations (apps/business-manager)
+The strict "Operations Console" light-mode and compact-geometry rules are waived for views that meet the criterion of **active, real-time service operations** (current examples include kitchen display station `KDSView.tsx`, floor plan table grid `TableSelectorGrid.tsx`, and handheld order entry `StaffOrdersView.tsx`):
+1. **High-Contrast Dark Canvas:** Permitted a dark theme (`bg-slate-950` / `bg-slate-900` with `border-slate-800`) to maximize glanceability and minimize glare on kitchen displays and mobile tablets in diverse restaurant lighting.
+2. **Urgency & Status Badges:** Time-critical items may use saturated status highlights (emerald, amber, red, purple) and motion cues (such as `animate-pulse` on kitchen tickets delayed >20m) to command immediate staff attention.
+3. **Touch-First Sizing:** Interactive buttons, ticket bump actions, and table selector cells must maintain touch targets >= 44px (waiving the standard 32px desktop button limit) to ensure reliable tap input on tablets and touchscreens.
 
 ## Colors
 
@@ -166,8 +146,8 @@ The typography is built entirely on `Inter` with fallback to native system sans-
 ### Typographic Principles
 - **Weights:** Strictly limited to `400` (Regular), `500` (Medium), and `600` (Semi-Bold). Weights outside this range (e.g. 300, 700, 800) are forbidden.
 - **Numbers & Metrics:** Must consistently use tabular numeric figures (`font-feature-settings: 'tnum' on, 'cv05' on`) to ensure perfect vertical alignment in accounting lists, inventory counts, and data tables.
-- **Financial Formatting:** Currencies are formatted in INR using the standard symbol `₹` without extra space before the integer (e.g., `₹14,580.00`).
-- **Date Formatting:** Normalized across all dashboards and reports as `DD MMM YYYY` (e.g., `14 Oct 2026`).
+- **Financial Formatting:** Currencies are formatted in INR using the standard symbol `₹` without extra space before the integer (e.g., `₹14,580.00`). For values exceeding 1,00,000, use standard Indian numbering system grouping (`en-IN` format, e.g. `₹1,50,000.00`).
+- **Date Formatting:** High-density tables display compact dates as `DD MMM YYYY` (e.g., `14 Oct 2026`) with tabular figures. Detail drawers, event audits, and inspection panels may display full timestamps as `DD MMM YYYY, HH:mm`.
 
 ## Layout & Spacing
 
@@ -224,10 +204,11 @@ The central operational component for restaurant management.
 - **Cell Content:** Typography `13px` Inter, color `#1F2933`.
 - **Row Hover:** Background `#F6F7F9` transition 100ms ease.
 - **Dividers:** `1px solid #E3E6EA` bottom border per row.
+- **Cell Overflow:** Data cells must preserve the exact 40px row height without multi-line expansion. Text columns subject to overflow (e.g. tenant or outlet names) must use single-line CSS truncation (`truncate`) and supply the complete string in a native `title` attribute for native browser hover inspection.
 
 ### Status Badges & Pills
 - **Geometry:** Height `20px`, horizontal padding `6px`, corner radius `4px`.
-- **Typography:** `11px` Inter, weight `500`, uppercase tracking disabled.
+- **Typography:** `11px` Inter, weight `500`, uppercase tracking disabled. Labels should be rendered in Title Case for uniform readability.
 - **States:**
   - *Active:* Text `#1B7F4B`, Background `#E6F4EC`.
   - *Trial / Past Due:* Text `#8A5A00`, Background `#FFF4DB`.
@@ -246,3 +227,6 @@ The central operational component for restaurant management.
 ### Metric / KPI Blocks
 - Condensed summary blocks used in operational dashboards.
 - Layout: Subdued caption title (`12px` `#616E7C`), metric value (`20px` weight `600` `#1F2933`, tabular figures), supporting change badge (`11px` status pill) arranged with an `8px` vertical gap.
+
+### Technical Metadata & Payloads
+- Raw JSON or technical traces (such as audit log metadata) must be rendered in 12px monospace (`font-mono text-xs`), contained in a `#F6F7F9` surface with a `1px solid #E3E6EA` border, with CSS `whitespace-pre-wrap break-all` and a constrained max-height scroll viewport.

@@ -5,6 +5,12 @@ export interface DataTableColumn<T> {
   header: string;
   align?: 'left' | 'right';
   width?: string;
+  /** Whether cell contents represent numeric or date figures requiring tabular numerals */
+  tabular?: boolean;
+  /** Whether this column represents a primary name requiring single-line truncation (max-w-[240px]) */
+  truncateName?: boolean;
+  /** Resolves the complete un-truncated string for native HTML title hover inspection */
+  getTitle?: (row: T) => string | undefined;
   render: (row: T) => React.ReactNode;
 }
 
@@ -15,6 +21,7 @@ export interface DataTableProps<T> {
   footer?: React.ReactNode;
   minWidth?: string;
   className?: string;
+  onRowClick?: (row: T) => void;
 }
 
 export function DataTable<T>({
@@ -24,6 +31,7 @@ export function DataTable<T>({
   footer,
   minWidth = '640px',
   className = '',
+  onRowClick,
 }: DataTableProps<T>) {
   return (
     <div className={`flex flex-col overflow-hidden rounded-md border border-ops-border bg-white ${className}`}>
@@ -49,18 +57,36 @@ export function DataTable<T>({
             {rows.map((row) => (
               <tr
                 key={rowKey(row)}
-                className="h-10 border-b border-ops-border transition-colors last:border-b-0 hover:bg-ops-canvas"
+                className={`h-10 border-b border-ops-border transition-colors duration-100 ease-in-out last:border-b-0 ${onRowClick ? 'cursor-pointer hover:bg-ops-canvas' : ''}`}
+                onClick={() => onRowClick && onRowClick(row)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onRowClick && onRowClick(row);
+                  }
+                }}
+                tabIndex={onRowClick ? 0 : -1}
+                role={onRowClick ? 'button' : undefined}
+                aria-label={onRowClick ? 'Row, click to select' : undefined}
               >
-                {columns.map((col) => (
-                  <td
-                    key={col.key}
-                    className={`px-3 text-[13px] leading-[18px] text-ops-text-primary ${
-                      col.align === 'right' ? 'text-right tabular-nums' : 'text-left'
-                    }`}
-                  >
-                    {col.render(row)}
-                  </td>
-                ))}
+                {columns.map((col) => {
+                  const isRight = col.align === 'right';
+                  const isTabular = col.tabular || isRight;
+                  const isNameTruncated = col.truncateName || col.key === 'name' || col.key === 'business' || col.key === 'outlet';
+                  const cellTitle = isNameTruncated && col.getTitle ? col.getTitle(row) : undefined;
+                  
+                  return (
+                    <td
+                      key={col.key}
+                      title={cellTitle}
+                      className={`px-3 text-[13px] leading-[18px] text-ops-text-primary ${
+                        isRight ? 'text-right' : 'text-left'
+                      } ${isTabular ? 'tabular-nums' : ''} ${isNameTruncated ? 'max-w-[240px] truncate' : ''}`}
+                    >
+                      {col.render(row)}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>

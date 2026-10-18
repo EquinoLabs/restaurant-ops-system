@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class PlanBase(BaseModel):
@@ -62,6 +62,55 @@ class BusinessSubscriptionRead(BaseModel):
     plan: Optional[PlanRead] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class OutletSubscriptionRead(BaseModel):
+    id: uuid.UUID
+    outlet_id: uuid.UUID
+    business_id: uuid.UUID
+    plan_id: uuid.UUID
+    status: str
+    is_current: bool
+    trial_ends_at: Optional[datetime] = None
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    cancel_at_period_end: bool = False
+    cancelled_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    plan: Optional[PlanRead] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class PlatformOutletSubscriptionUpdate(BaseModel):
+    action_type: str
+    plan_code: Optional[str] = None
+    plan_name: Optional[str] = None
+    trial_ends_at: Optional[datetime] = None
+    current_period_start: Optional[datetime] = None
+    current_period_end: Optional[datetime] = None
+    reason: Optional[str] = None
+
+    @field_validator("trial_ends_at", "current_period_start", "current_period_end", mode="before")
+    @classmethod
+    def validate_utc_datetime(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str):
+            try:
+                dt = datetime.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError as e:
+                raise ValueError(f"Invalid ISO datetime string: {v}") from e
+        elif isinstance(v, datetime):
+            dt = v
+        else:
+            raise ValueError("Expected datetime string or datetime object.")
+
+        if dt.tzinfo is None:
+            raise ValueError("Datetime must be timezone-aware (UTC). Ambiguous naive datetimes are rejected.")
+        from datetime import timezone
+        return dt.astimezone(timezone.utc)
 
 
 class EntitlementOverrideCreate(BaseModel):

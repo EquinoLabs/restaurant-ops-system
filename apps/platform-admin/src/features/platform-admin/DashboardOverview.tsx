@@ -273,15 +273,15 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
                   key={item.business.id}
                   type="button"
                   onClick={() => onOpenBusiness?.(item.business.id)}
-                  className="group flex w-full items-center justify-between gap-3 py-3 text-left text-ops-text-primary transition-colors hover:text-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+                  className="group flex w-full items-center justify-between gap-3 py-3 text-left text-ops-text-primary transition-colors duration-100 ease-in-out hover:text-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus focus:ring-offset-1"
                 >
-                  <span className="min-w-0 truncate text-[13px] group-hover:underline">
+                  <span className="min-w-0 max-w-[280px] sm:max-w-md truncate text-[13px] group-hover:underline" title={item.text}>
                     {item.text}
                   </span>
                   <span className="flex shrink-0 items-center gap-1.5">
                     <StatusBadge tone={item.tone} label={item.badgeLabel} />
                     <ChevronRight
-                      className="h-4 w-4 text-ops-text-secondary transition-transform group-hover:translate-x-0.5"
+                      className="h-4 w-4 text-ops-text-secondary transition-transform duration-100 group-hover:translate-x-0.5"
                       aria-hidden="true"
                     />
                   </span>

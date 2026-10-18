@@ -24,7 +24,6 @@ export const BusinessDirectoryPage: React.FC = () => {
     owner_email: '',
     owner_password: '',
     owner_display_name: '',
-    public_slug: '',
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
@@ -55,13 +54,8 @@ export const BusinessDirectoryPage: React.FC = () => {
     if (!token) return;
     setProvisionError(null);
 
-    const slug = bizForm.public_slug.trim();
-    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim() || !slug) {
-      setProvisionError('Business name, owner details, and public slug are required.');
-      return;
-    }
-    if (!/^[a-z0-9-]+$/.test(slug)) {
-      setProvisionError('Public slug may only contain lowercase letters, numbers, and hyphens.');
+    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim()) {
+      setProvisionError('Business name and owner details are required.');
       return;
     }
     if (bizForm.name.trim().length < 2 || bizForm.name.trim().length > 200) {
@@ -89,7 +83,6 @@ export const BusinessDirectoryPage: React.FC = () => {
         {
           ...bizForm,
           name: bizForm.name.trim(),
-          public_slug: slug,
         },
         token
       );
@@ -100,7 +93,6 @@ export const BusinessDirectoryPage: React.FC = () => {
         owner_email: '',
         owner_password: '',
         owner_display_name: '',
-        public_slug: '',
         currency: 'INR',
         timezone: 'Asia/Kolkata',
         address: '',
@@ -165,28 +157,6 @@ export const BusinessDirectoryPage: React.FC = () => {
                   value={bizForm.name}
                   onChange={(e) => setBizForm({ ...bizForm, name: e.target.value })}
                   placeholder="e.g. Himalayan Hospitality Pvt Ltd"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              <FormField
-                id="biz-slug"
-                label="Public slug"
-                required
-                hint="Lowercase letters, numbers, and hyphens only."
-              >
-                <input
-                  id="biz-slug"
-                  type="text"
-                  required
-                  value={bizForm.public_slug}
-                  onChange={(e) =>
-                    setBizForm({
-                      ...bizForm,
-                      public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-'),
-                    })
-                  }
-                  placeholder="e.g. riverside-camp"
                   className={opsInputClass}
                 />
               </FormField>

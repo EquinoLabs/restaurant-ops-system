@@ -1,11 +1,64 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAuth } from '@roms/api-client';
-import { PlatformBusiness, BusinessSubscriptionItem } from '@roms/shared-types';
+import { PlatformBusiness, BusinessSubscriptionItem, PlatformOutlet } from '@roms/shared-types';
 import { fetchBusinessSubscriptions } from '@roms/api-client';
+import { StatusBadge, StatusTone } from '../../components/ops-ui/StatusBadge';
+import { Button } from '../../components/ops-ui/Button';
 
 export interface SubscriptionHistoryTabProps {
   business: PlatformBusiness;
   onEditSubscription?: (biz: PlatformBusiness) => void;
+}
+
+function resolveSubTone(status: string, isCurrent: boolean): StatusTone {
+  if (!isCurrent) return 'neutral';
+  switch (status) {
+    case 'active':
+      return 'active';
+    case 'trial':
+    case 'past_due':
+      return 'pending';
+    case 'expired':
+      return 'critical';
+    case 'cancelled':
+    default:
+      return 'neutral';
+  }
+}
+
+function resolveSubLabel(status: string, isCurrent: boolean): string {
+  if (!isCurrent) {
+    return status ? `${status.charAt(0).toUpperCase() + status.slice(1)} (Past)` : 'Past';
+  }
+  switch (status) {
+    case 'active':
+      return 'Active';
+    case 'trial':
+      return 'Trial';
+    case 'past_due':
+      return 'Past Due';
+    case 'expired':
+      return 'Expired';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown';
+  }
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '—';
+  try {
+    const d = new Date(dateStr);
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  } catch {
+    return dateStr;
+  }
 }
 
 export const SubscriptionHistoryTab: React.FC<SubscriptionHistoryTabProps> = ({
@@ -35,109 +88,66 @@ export const SubscriptionHistoryTab: React.FC<SubscriptionHistoryTabProps> = ({
     loadSubscriptions();
   }, [loadSubscriptions]);
 
-  const currentSub = subscriptions.find((s) => s.is_current);
+  const outlets = useMemo<PlatformOutlet[]>(() => business.outlets || [], [business.outlets]);
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case 'active':
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 uppercase">
-            Active
-          </span>
-        );
-      case 'past_due':
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 uppercase">
-            Past Due
-          </span>
-        );
-      case 'cancelled':
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30 uppercase">
-            Cancelled
-          </span>
-        );
-      case 'trial':
-      default:
-        return (
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-500/20 text-sky-400 border border-sky-500/30 uppercase">
-            Trial
-          </span>
-        );
-    }
-  };
+  // Index subscriptions by outlet_id
+  const { currentSubsByOutlet, historySubsByOutlet } = useMemo(() => {
+    const currentMap = new Map<string, BusinessSubscriptionItem>();
+    const historyMap = new Map<string, BusinessSubscriptionItem[]>();
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return '—';
-    try {
-      return new Date(dateStr).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      });
-    } catch {
-      return dateStr;
+    for (const sub of subscriptions) {
+      if (!sub.outlet_id) continue;
+      const list = historyMap.get(sub.outlet_id) || [];
+      list.push(sub);
+      historyMap.set(sub.outlet_id, list);
+
+      if (sub.is_current && !currentMap.has(sub.outlet_id)) {
+        currentMap.set(sub.outlet_id, sub);
+      }
     }
-  };
+
+    return { currentSubsByOutlet: currentMap, historySubsByOutlet: historyMap };
+  }, [subscriptions]);
+
+  const outletMap = useMemo(() => {
+    const map = new Map<string, PlatformOutlet>();
+    for (const out of outlets) {
+      map.set(out.id, out);
+    }
+    return map;
+  }, [outlets]);
 
   return (
     <div className="space-y-6">
-      {/* Header & Actions */}
-      <div className="flex flex-wrap items-center justify-between gap-4 pb-2 border-b border-slate-800">
+      {/* Header & Refresh */}
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-ops-divider pb-4">
         <div>
-          <h3 className="text-sm font-bold text-white uppercase tracking-wider">
+          <h3 className="text-sm font-semibold text-ops-text-primary">
             Subscription Lifecycle & History
           </h3>
-          <p className="text-xs text-slate-400 mt-0.5">
-            Complete record of authoritative subscription terms and lifecycle state transitions
+          <p className="mt-0.5 text-xs text-ops-text-secondary">
+            Authoritative outlet-scoped subscription records and transition history per Stage 3 architecture.
           </p>
         </div>
         <div className="flex items-center space-x-2">
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={loadSubscriptions}
             disabled={loading}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition-colors disabled:opacity-50"
-            title="Refresh subscription history"
           >
-            <svg
-              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
-          </button>
-          {onEditSubscription && (
-            <button
-              onClick={() => onEditSubscription(business)}
-              className="px-3.5 py-2 rounded-xl bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold transition-all shadow-lg shadow-indigo-500/20 flex items-center space-x-1.5"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth="2"
-                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                />
-              </svg>
-              <span>Manage Lifecycle</span>
-            </button>
-          )}
+            {loading ? 'Refreshing…' : 'Refresh'}
+          </Button>
         </div>
       </div>
 
       {error && (
-        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium flex items-center justify-between">
+        <div className="flex items-center justify-between rounded-md border border-ops-status-critical-bg bg-ops-status-critical-bg/30 p-3.5 text-xs text-ops-status-critical-text">
           <span>{error}</span>
           <button
+            type="button"
             onClick={loadSubscriptions}
-            className="underline hover:text-red-300 font-bold ml-3"
+            className="font-semibold underline hover:opacity-80"
           >
             Retry
           </button>
@@ -145,151 +155,187 @@ export const SubscriptionHistoryTab: React.FC<SubscriptionHistoryTabProps> = ({
       )}
 
       {loading && subscriptions.length === 0 ? (
-        <div className="p-10 text-center bg-slate-950/60 border border-slate-800 rounded-2xl text-slate-400">
-          <div className="w-6 h-6 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-          <p className="text-xs">Loading subscription records...</p>
+        <div className="flex items-center justify-center rounded-md border border-ops-border bg-white p-8 text-xs text-ops-text-secondary">
+          Loading subscription records…
         </div>
       ) : (
         <>
-          {/* Current Subscription Spotlight Card */}
-          {currentSub ? (
-            <div className="bg-gradient-to-br from-slate-900 via-slate-900 to-indigo-950/30 border border-indigo-500/30 rounded-2xl p-5 shadow-lg space-y-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                    Current Authoritative Subscription
-                  </span>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <h4 className="text-base font-black text-white">
-                      {currentSub.plan?.name || currentSub.plan?.code || business.plan_name || 'Standard Plan'}
-                    </h4>
-                    <span className="text-xs font-mono text-slate-400">
-                      ({currentSub.plan?.code || 'canonical'})
-                    </span>
-                    {getStatusBadge(currentSub.status)}
-                  </div>
-                </div>
-                {currentSub.cancel_at_period_end && (
-                  <span className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                    ⚠️ Cancels at Period End
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs pt-3 border-t border-slate-800/80">
-                <div>
-                  <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                    Current Period Start
-                  </span>
-                  <span className="font-bold text-white mt-0.5 block">
-                    {formatDate(currentSub.current_period_start)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                    Current Period End
-                  </span>
-                  <span className="font-bold text-indigo-300 mt-0.5 block">
-                    {formatDate(currentSub.current_period_end)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                    Trial Expiry
-                  </span>
-                  <span className="font-bold text-slate-300 mt-0.5 block">
-                    {formatDate(currentSub.trial_ends_at)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-slate-400 block text-[10px] uppercase font-semibold">
-                    Provisioned On
-                  </span>
-                  <span className="font-mono text-slate-300 text-[11px] mt-0.5 block">
-                    {formatDate(currentSub.created_at)}
-                  </span>
-                </div>
-              </div>
-
-              {currentSub.cancelled_at && (
-                <div className="pt-2 border-t border-slate-800/80 text-xs text-rose-400">
-                  <span className="font-semibold">Cancelled at: </span>
-                  {formatDate(currentSub.cancelled_at)}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-6 bg-slate-950/60 border border-slate-800 rounded-2xl text-slate-400 text-xs text-center">
-              No active subscription row found in the authoritative ledger. The business may be using legacy profile values.
-            </div>
-          )}
-
-          {/* Subscription History Ledger */}
+          {/* Outlet Subscriptions Overview Grid */}
           <div className="space-y-3">
-            <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
-              Subscription Ledger ({subscriptions.length} records)
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-semibold uppercase tracking-wider text-ops-text-secondary">
+                Outlet Subscriptions ({outlets.length} Outlets)
+              </h4>
+            </div>
+
+            {outlets.length === 0 ? (
+              <div className="rounded-md border border-ops-border bg-white p-6 text-center text-xs text-ops-text-secondary">
+                No outlets registered for this business. Subscriptions are scoped to outlets.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {outlets.map((outlet) => {
+                  const currentSub = currentSubsByOutlet.get(outlet.id);
+                  const outletHistory = historySubsByOutlet.get(outlet.id) || [];
+                  const latestSub = outletHistory.length > 0 ? outletHistory[0] : null;
+
+                  return (
+                    <div
+                      key={outlet.id}
+                      className="rounded-md border border-ops-border bg-white p-4 text-xs shadow-none space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-2 border-b border-ops-divider pb-2.5">
+                        <div>
+                          <div className="font-semibold text-ops-text-primary text-[13px]">
+                            {outlet.name}
+                          </div>
+                          <div className="font-mono text-[11px] text-ops-text-secondary">
+                            {outlet.id.slice(0, 8)}…
+                          </div>
+                        </div>
+                        <StatusBadge
+                          tone={outlet.status === 'active' ? 'active' : 'critical'}
+                          label={outlet.status === 'active' ? 'Active' : 'Suspended'}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex justify-between items-center">
+                          <span className="text-ops-text-secondary">Current Plan:</span>
+                          <span className="font-medium text-ops-text-primary">
+                            {currentSub
+                              ? currentSub.plan?.name || currentSub.plan?.code || '—'
+                              : latestSub
+                              ? latestSub.plan?.name || latestSub.plan?.code || '—'
+                              : '—'}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-ops-text-secondary">Subscription Status:</span>
+                          {currentSub ? (
+                            <StatusBadge
+                              tone={resolveSubTone(currentSub.status, true)}
+                              label={resolveSubLabel(currentSub.status, true)}
+                            />
+                          ) : latestSub ? (
+                            <StatusBadge
+                              tone="neutral"
+                              label="No current subscription"
+                            />
+                          ) : (
+                            <StatusBadge
+                              tone="neutral"
+                              label="No subscription"
+                            />
+                          )}
+                        </div>
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-ops-text-secondary">Period End / Expiry:</span>
+                          <span className="font-mono text-[11px] text-ops-text-primary tabular-nums">
+                            {currentSub
+                              ? formatDate(currentSub.current_period_end || currentSub.trial_ends_at)
+                              : latestSub
+                              ? formatDate(latestSub.current_period_end || latestSub.trial_ends_at)
+                              : '—'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Detailed Subscription Ledger Table */}
+          <div className="space-y-3 pt-4">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-ops-text-secondary">
+              Subscription History Ledger ({subscriptions.length} records)
             </h4>
 
             {subscriptions.length === 0 ? (
-              <div className="p-8 text-center bg-slate-950/40 border border-slate-800 rounded-2xl text-slate-500 text-xs">
-                No subscription history entries recorded yet.
+              <div className="rounded-md border border-ops-border bg-white p-6 text-center text-xs text-ops-text-secondary">
+                No subscription history entries recorded yet for this business's outlets.
               </div>
             ) : (
-              <div className="overflow-x-auto rounded-xl border border-slate-800 bg-slate-950/60">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-900 border-b border-slate-800 text-[10px] uppercase tracking-wider text-slate-400">
+              <div className="overflow-x-auto rounded-md border border-ops-border bg-white">
+                <table className="w-full text-left text-xs">
+                  <thead className="border-b border-ops-divider bg-ops-canvas text-[11px] font-semibold uppercase tracking-wider text-ops-text-secondary">
                     <tr>
-                      <th className="px-4 py-3">Plan</th>
-                      <th className="px-4 py-3">Status</th>
-                      <th className="px-4 py-3">Current</th>
-                      <th className="px-4 py-3">Period Start</th>
-                      <th className="px-4 py-3">Period End</th>
-                      <th className="px-4 py-3">Cancel at End</th>
-                      <th className="px-4 py-3">Created</th>
+                      <th className="px-4 py-2.5">Outlet</th>
+                      <th className="px-4 py-2.5">Plan</th>
+                      <th className="px-4 py-2.5">Stored Status</th>
+                      <th className="px-4 py-2.5">Current Term</th>
+                      <th className="px-4 py-2.5">Period Start</th>
+                      <th className="px-4 py-2.5">Period End</th>
+                      <th className="px-4 py-2.5">Auto-Renew</th>
+                      <th className="px-4 py-2.5">Provisioned</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-800/60">
-                    {subscriptions.map((sub) => (
-                      <tr
-                        key={sub.id}
-                        className={`hover:bg-slate-900/50 transition-colors ${
-                          sub.is_current ? 'bg-indigo-950/20' : ''
-                        }`}
-                      >
-                        <td className="px-4 py-3 font-semibold text-white">
-                          <div>{sub.plan?.name || sub.plan?.code || '—'}</div>
-                          <div className="text-[10px] font-mono text-slate-500">
-                            {sub.plan?.code || sub.plan_id.slice(0, 8)}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">{getStatusBadge(sub.status)}</td>
-                        <td className="px-4 py-3">
-                          {sub.is_current ? (
-                            <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 uppercase">
-                              Current
-                            </span>
-                          ) : (
-                            <span className="text-slate-500 text-[11px]">Past</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-slate-300">
-                          {formatDate(sub.current_period_start)}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-slate-200">
-                          {formatDate(sub.current_period_end || sub.trial_ends_at)}
-                        </td>
-                        <td className="px-4 py-3">
-                          {sub.cancel_at_period_end ? (
-                            <span className="text-amber-400 font-semibold">Yes</span>
-                          ) : (
-                            <span className="text-slate-500">No</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 font-mono text-[11px] text-slate-400">
-                          {formatDate(sub.created_at)}
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody className="divide-y divide-ops-divider text-[13px]">
+                    {subscriptions.map((sub) => {
+                      const outlet = sub.outlet_id ? outletMap.get(sub.outlet_id) : null;
+                      const outletDisplayName = outlet ? outlet.name : sub.outlet_id ? `Outlet ${sub.outlet_id.slice(0, 8)}…` : '—';
+
+                      return (
+                        <tr
+                          key={sub.id}
+                          className={`transition-colors hover:bg-ops-canvas/50 ${
+                            sub.is_current ? 'bg-ops-accent-subtle/30' : ''
+                          }`}
+                        >
+                          <td className="px-4 py-3 font-medium text-ops-text-primary">
+                            <div>{outletDisplayName}</div>
+                            {sub.outlet_id && (
+                              <div className="font-mono text-[11px] text-ops-text-disabled">
+                                {sub.outlet_id.slice(0, 8)}…
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-ops-text-primary">
+                            <div className="font-medium">{sub.plan?.name || sub.plan?.code || '—'}</div>
+                            <div className="font-mono text-[11px] text-ops-text-secondary">
+                              {sub.plan?.code || sub.plan_id.slice(0, 8)}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <StatusBadge
+                              tone={resolveSubTone(sub.status, sub.is_current)}
+                              label={sub.status ? sub.status.charAt(0).toUpperCase() + sub.status.slice(1) : 'Unknown'}
+                            />
+                          </td>
+                          <td className="px-4 py-3">
+                            {sub.is_current ? (
+                              <span className="inline-flex rounded bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                Current
+                              </span>
+                            ) : (
+                              <span className="inline-flex rounded bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500">
+                                Past
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[12px] text-ops-text-secondary tabular-nums">
+                            {formatDate(sub.current_period_start)}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[12px] text-ops-text-secondary tabular-nums">
+                            {formatDate(sub.current_period_end || sub.trial_ends_at)}
+                          </td>
+                          <td className="px-4 py-3 text-[12px] text-ops-text-secondary">
+                            {sub.cancel_at_period_end ? (
+                              <span className="text-amber-600 font-medium">Cancels</span>
+                            ) : (
+                              'Renews'
+                            )}
+                          </td>
+                          <td className="px-4 py-3 font-mono text-[12px] text-ops-text-disabled tabular-nums">
+                            {formatDate(sub.created_at)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

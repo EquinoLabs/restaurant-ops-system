@@ -154,8 +154,7 @@ def test_business_name_validation_and_commercial_protection(client: TestClient, 
             "name": "Protected Biz",
             "subscription_status": "cancelled",
             "plan_name": "free",
-            "max_outlets": 999,
-            "status": "suspended"
+            "max_outlets": 999
         }
     )
     assert resp.status_code == 200
@@ -164,7 +163,6 @@ def test_business_name_validation_and_commercial_protection(client: TestClient, 
     assert updated_biz["subscription_status"] == "active"
     assert updated_biz["plan_name"] == "growth_pos"
     assert updated_biz["max_outlets"] == 5
-    assert updated_biz["status"] == "active"
 
 
 def test_outlet_profile_update_permissions(client: TestClient, db_session: Session, test_setup):
@@ -355,3 +353,90 @@ def test_legacy_admin_business_read_receives_commercial_fields(client: TestClien
     assert data["subscription_status"] == "active"
     assert data["plan_name"] == "growth_pos"
     assert data["max_outlets"] == 5
+
+
+def test_business_operational_status_transitions_and_audit(client: TestClient, db_session: Session, test_setup):
+    """
+    Verify business operational status updates via PATCH /platform/businesses/{id}:
+    - active -> suspended emits platform.business.suspend
+    - suspended -> active emits platform.business.reactivate
+    - unchanged status does not emit duplicate suspend/reactivate audit events
+    - subscription rows and subscription fields are not mutated
+    """
+    biz = test_setup["business"]
+    admin_headers = test_setup["admin_headers"]
+
+    # Record initial subscription state
+    initial_sub_status = biz.subscription_status
+    initial_plan = biz.plan_name
+
+    # 1. Active -> Suspended
+    suspend_res = client.patch(
+        f"/api/v1/platform/businesses/{biz.id}",
+        headers=admin_headers,
+        json={"name": biz.name, "status": "suspended"}
+    )
+    assert suspend_res.status_code == 200
+    assert suspend_res.json()["status"] == "suspended"
+
+    # Verify platform.business.suspend audit log
+    suspend_audit = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.business_id == biz.id,
+            AuditLog.action == "platform.business.suspend"
+        )
+        .order_by(AuditLog.created_at.desc())
+        .first()
+    )
+    assert suspend_audit is not None
+    assert suspend_audit.metadata_json["before"]["status"] == "active"
+    assert suspend_audit.metadata_json["after"]["status"] == "suspended"
+
+    # 2. Unchanged status (patching name while status remains suspended)
+    dup_res = client.patch(
+        f"/api/v1/platform/businesses/{biz.id}",
+        headers=admin_headers,
+        json={"name": "Renamed Suspended Biz", "status": "suspended"}
+    )
+    assert dup_res.status_code == 200
+
+    # Count suspend audit logs -> must still be exactly 1 (no duplicate suspend audit event)
+    suspend_count = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.business_id == biz.id,
+            AuditLog.action == "platform.business.suspend"
+        )
+        .count()
+    )
+    assert suspend_count == 1
+
+    # 3. Suspended -> Active (Reactivation)
+    reactivate_res = client.patch(
+        f"/api/v1/platform/businesses/{biz.id}",
+        headers=admin_headers,
+        json={"name": "Renamed Active Biz", "status": "active"}
+    )
+    assert reactivate_res.status_code == 200
+    assert reactivate_res.json()["status"] == "active"
+
+    # Verify platform.business.reactivate audit log
+    reactivate_audit = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.business_id == biz.id,
+            AuditLog.action == "platform.business.reactivate"
+        )
+        .order_by(AuditLog.created_at.desc())
+        .first()
+    )
+    assert reactivate_audit is not None
+    assert reactivate_audit.metadata_json["before"]["status"] == "suspended"
+    assert reactivate_audit.metadata_json["after"]["status"] == "active"
+
+    # 4. Verify subscription fields were NOT mutated
+    db_session.refresh(biz)
+    assert biz.subscription_status == initial_sub_status
+    assert biz.plan_name == initial_plan
+

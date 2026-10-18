@@ -15,10 +15,17 @@ import {
   StatusBadge,
   Tabs,
   FormField,
+  Drawer,
+  ConfirmDialog,
   opsInputClass,
+  opsSelectClass,
   type DataTableColumn,
 } from '../../components/ops-ui';
-import { accountLabel, accountTone, formatCreatedAt, subscriptionLabel, subscriptionTone } from './BusinessDirectory';
+import { accountLabel, accountTone, formatCreatedAt } from './BusinessDirectory';
+import {
+  updatePlatformOutletSubscription,
+  type PlatformOutletSubscriptionUpdatePayload,
+} from './outletSubscriptionApi';
 
 type OutletTab = 'profile' | 'subscription';
 
@@ -60,6 +67,215 @@ export const OutletDetailPage: React.FC = () => {
   const [entitlementsError, setEntitlementsError] = useState<string | null>(null);
 
   const isOperator = user?.platform_role === 'operator';
+
+  // Subscription lifecycle mutation state
+  const [isSubDrawerOpen, setIsSubDrawerOpen] = useState(false);
+  const [subActionType, setSubActionType] = useState<PlatformOutletSubscriptionUpdatePayload['action_type']>('change_plan');
+  const [subPlanCode, setSubPlanCode] = useState<string>('growth_pos');
+  const [subReason, setSubReason] = useState<string>('');
+  const [subTrialEndsAt, setSubTrialEndsAt] = useState<string>('');
+  const [subPeriodStart, setSubPeriodStart] = useState<string>('');
+  const [subPeriodEnd, setSubPeriodEnd] = useState<string>('');
+  const [subMutating, setSubMutating] = useState(false);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [subSuccess, setSubSuccess] = useState<string | null>(null);
+
+  // Confirmation dialog state
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{
+    title: string;
+    consequence: string;
+    confirmLabel: string;
+    confirmationName: string;
+    confirmationPrompt?: string;
+  } | null>(null);
+
+  const CANONICAL_PLANS = [
+    { code: 'starter_pos', label: 'Starter POS' },
+    { code: 'growth_pos', label: 'Growth POS' },
+    { code: 'pro_kds', label: 'Pro KDS' },
+    { code: 'enterprise', label: 'Enterprise' },
+    { code: 'free_qr', label: 'Free QR Menu' },
+  ];
+
+  const resolvedStatus = entitlements?.subscription?.resolved_status || 'unknown';
+
+  const isCancelScheduled = Boolean(entitlements?.subscription?.cancel_at_period_end);
+
+  // Determine allowed lifecycle actions based on resolvedStatus and cancel_at_period_end
+  const availableActions = useMemo(() => {
+    switch (resolvedStatus) {
+      case 'trial':
+        return [
+          { action: 'activate' as const, label: 'Activate Paid Subscription' },
+          { action: 'extend_trial' as const, label: 'Extend Trial' },
+          { action: 'cancel_immediately' as const, label: 'Cancel Immediately' },
+        ];
+      case 'active': {
+        const actions = [
+          { action: 'renew' as const, label: 'Renew (Extend 1 Year)' },
+          { action: 'change_plan' as const, label: 'Change Plan (Mid-Term)' },
+          { action: 'change_plan_new_term' as const, label: 'Change Plan (Start New 1-Year Term)' },
+        ];
+        if (isCancelScheduled) {
+          actions.push({ action: 'revoke_scheduled_cancellation' as const, label: 'Revoke Scheduled Cancellation' });
+        } else {
+          actions.push({ action: 'schedule_cancellation' as const, label: 'Schedule Cancellation (At Period End)' });
+        }
+        actions.push(
+          { action: 'mark_past_due' as const, label: 'Mark Past Due' },
+          { action: 'cancel_immediately' as const, label: 'Cancel Immediately' }
+        );
+        return actions;
+      }
+      case 'past_due': {
+        const actions = [
+          { action: 'renew' as const, label: 'Renew' },
+          { action: 'mark_past_due_with_extension' as const, label: 'Grant Grace Extension' },
+        ];
+        if (isCancelScheduled) {
+          actions.push({ action: 'revoke_scheduled_cancellation' as const, label: 'Revoke Scheduled Cancellation' });
+        } else {
+          actions.push({ action: 'schedule_cancellation' as const, label: 'Schedule Cancellation (At Period End)' });
+        }
+        actions.push({ action: 'cancel_immediately' as const, label: 'Cancel Immediately' });
+        return actions;
+      }
+      case 'expired':
+        return [
+          { action: 'activate' as const, label: 'Activate New Term' },
+          { action: 'renew' as const, label: 'Renew (Late Renewal)' },
+          { action: 'cancel_immediately' as const, label: 'Cancel Immediately' },
+        ];
+      case 'cancelled':
+        return [
+          { action: 'activate' as const, label: 'Reactivate (New Term)' },
+        ];
+      default:
+        return [
+          { action: 'activate' as const, label: 'Activate Subscription' },
+          { action: 'renew' as const, label: 'Renew' },
+          { action: 'change_plan' as const, label: 'Change Plan' },
+          { action: 'cancel_immediately' as const, label: 'Cancel Immediately' },
+        ];
+    }
+  }, [resolvedStatus]);
+
+  const openSubscriptionDrawer = () => {
+    setSubError(null);
+    setSubSuccess(null);
+    // Default action to first available
+    const initialAction = availableActions[0]?.action || 'change_plan';
+    setSubActionType(initialAction);
+    setSubPlanCode(entitlements?.subscription?.plan_code || 'growth_pos');
+    setSubReason('');
+    setSubTrialEndsAt('');
+    setSubPeriodStart('');
+    setSubPeriodEnd('');
+    setIsSubDrawerOpen(true);
+  };
+
+  const executeSubscriptionMutation = async () => {
+    if (!token || !outletId) return;
+
+    // Build payload
+    const payload: PlatformOutletSubscriptionUpdatePayload = {
+      action_type: subActionType,
+    };
+
+    if (
+      subActionType === 'activate' ||
+      subActionType === 'renew' ||
+      subActionType === 'change_plan' ||
+      subActionType === 'change_plan_new_term'
+    ) {
+      payload.plan_code = subPlanCode;
+    }
+
+    if (subReason.trim()) {
+      payload.reason = subReason.trim();
+    }
+
+    if (subActionType === 'extend_trial' && subTrialEndsAt) {
+      payload.trial_ends_at = new Date(subTrialEndsAt).toISOString();
+    }
+
+    if (
+      (subActionType === 'activate' || subActionType === 'renew' || subActionType === 'change_plan_new_term') &&
+      subPeriodStart
+    ) {
+      payload.current_period_start = new Date(subPeriodStart).toISOString();
+    }
+
+    if (
+      (subActionType === 'activate' ||
+        subActionType === 'renew' ||
+        subActionType === 'change_plan_new_term' ||
+        subActionType === 'mark_past_due_with_extension') &&
+      subPeriodEnd
+    ) {
+      payload.current_period_end = new Date(subPeriodEnd).toISOString();
+    }
+
+    try {
+      setSubMutating(true);
+      setSubError(null);
+      await updatePlatformOutletSubscription(outletId, payload, token);
+      setSubSuccess('Subscription updated successfully.');
+      setIsSubDrawerOpen(false);
+      setConfirmDialogOpen(false);
+      // Reload server state
+      await Promise.all([loadOutlet(), loadEntitlements()]);
+    } catch (err: any) {
+      setSubError(err.message || 'Failed to update subscription.');
+    } finally {
+      setSubMutating(false);
+    }
+  };
+
+  const handleSubSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSubError(null);
+
+    // Check if action requires explicit confirmation
+    const requiresImmediateCancelConfirm = subActionType === 'cancel_immediately';
+    const isNewTermAction =
+      subActionType === 'activate' ||
+      subActionType === 'change_plan_new_term' ||
+      (subActionType === 'renew' && (resolvedStatus === 'expired' || resolvedStatus === 'past_due'));
+
+    if (requiresImmediateCancelConfirm) {
+      if (!subReason.trim()) {
+        setSubError('A reason is required for immediate cancellation.');
+        return;
+      }
+      setConfirmConfig({
+        title: 'Cancel Subscription Immediately',
+        consequence: `This will immediately revoke access to paid features for outlet "${outlet?.name}". This action cannot be undone.`,
+        confirmLabel: 'Cancel Immediately',
+        confirmationName: 'CANCEL',
+        confirmationPrompt: 'To confirm immediate cancellation, type CANCEL below:',
+      });
+      setConfirmDialogOpen(true);
+      return;
+    }
+
+    if (isNewTermAction) {
+      const planName = CANONICAL_PLANS.find((p) => p.code === subPlanCode)?.label || subPlanCode;
+      setConfirmConfig({
+        title: 'Commit New Annual Subscription Term',
+        consequence: `This will commit a new 1-year billing term on the "${planName}" plan for outlet "${outlet?.name}".`,
+        confirmLabel: 'Confirm New Term',
+        confirmationName: 'CONFIRM',
+        confirmationPrompt: 'To confirm committing a new annual term, type CONFIRM below:',
+      });
+      setConfirmDialogOpen(true);
+      return;
+    }
+
+    // For other actions, submit directly
+    void executeSubscriptionMutation();
+  };
 
   const loadOutlet = useCallback(async () => {
     if (!token || !outletId) return;
@@ -122,6 +338,11 @@ export const OutletDetailPage: React.FC = () => {
     if (isNaN(end)) return null;
     return Math.max(0, Math.ceil((end - Date.now()) / (24 * 60 * 60 * 1000)));
   }, [entitlements?.subscription.trial_ends_at]);
+
+  const periodEndText = useMemo(() => {
+    if (!entitlements?.subscription.current_period_end) return '—';
+    return new Date(entitlements.subscription.current_period_end).toLocaleDateString();
+  }, [entitlements?.subscription.current_period_end]);
 
   const updateField = <K extends keyof PlatformOutletProfileUpdatePayload>(
     key: K,
@@ -470,7 +691,7 @@ export const OutletDetailPage: React.FC = () => {
                   <div className="flex h-8 items-center gap-2 rounded-md border border-ops-border bg-white pl-2 pr-1">
                     <span
                       aria-hidden="true"
-                      className="h-4 w-4 shrink-0 rounded-full border border-ops-border"
+                      className="h-4 w-4 shrink-0 rounded-sm border border-ops-border shadow-none"
                       style={{ backgroundColor: isValidHex(form.primary_color) ? form.primary_color : '#CBD2D9' }}
                     />
                     <input
@@ -498,7 +719,7 @@ export const OutletDetailPage: React.FC = () => {
                   <div className="flex h-8 items-center gap-2 rounded-md border border-ops-border bg-white pl-2 pr-1">
                     <span
                       aria-hidden="true"
-                      className="h-4 w-4 shrink-0 rounded-full border border-ops-border"
+                      className="h-4 w-4 shrink-0 rounded-sm border border-ops-border shadow-none"
                       style={{ backgroundColor: isValidHex(form.accent_color) ? form.accent_color : '#CBD2D9' }}
                     />
                     <input
@@ -538,14 +759,14 @@ export const OutletDetailPage: React.FC = () => {
                 <Info className="h-4 w-4 text-ops-text-secondary" aria-hidden="true" />
               </div>
               <dl className="flex flex-col text-[13px]">
-                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
-                  <dt className="text-xs text-ops-text-secondary">Status</dt>
+                <div className="flex min-h-[36px] items-center justify-between gap-2 border-b border-ops-divider py-2">
+                  <dt className="w-36 shrink-0 text-xs text-ops-text-secondary">Status</dt>
                   <dd>
                     <StatusBadge tone={accountTone(outlet.status)} label={accountLabel(outlet.status)} />
                   </dd>
                 </div>
-                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
-                  <dt className="text-xs text-ops-text-secondary">Parent business</dt>
+                <div className="flex min-h-[36px] items-center justify-between gap-2 border-b border-ops-divider py-2">
+                  <dt className="w-36 shrink-0 text-xs text-ops-text-secondary">Parent business</dt>
                   <dd className="min-w-0 truncate text-right">
                     {outlet.business_id ? (
                       <Link
@@ -559,8 +780,8 @@ export const OutletDetailPage: React.FC = () => {
                     )}
                   </dd>
                 </div>
-                <div className="flex items-center justify-between gap-2 border-b border-ops-divider py-2.5">
-                  <dt className="text-xs text-ops-text-secondary">Public URL</dt>
+                <div className="flex min-h-[36px] items-center justify-between gap-2 border-b border-ops-divider py-2">
+                  <dt className="w-36 shrink-0 text-xs text-ops-text-secondary">Public URL</dt>
                   <dd className="min-w-0 truncate text-right">
                     <a
                       href={`/m/${outlet.public_slug}`}
@@ -572,9 +793,9 @@ export const OutletDetailPage: React.FC = () => {
                     </a>
                   </dd>
                 </div>
-                <div className="flex items-center justify-between gap-2 py-2.5">
-                  <dt className="text-xs text-ops-text-secondary">Created date</dt>
-                  <dd className="text-ops-text-primary">{formatCreatedAt(outlet.created_at)}</dd>
+                <div className="flex min-h-[36px] items-center justify-between gap-2 py-2">
+                  <dt className="w-36 shrink-0 text-xs text-ops-text-secondary">Created date</dt>
+                  <dd className="font-medium text-ops-text-primary tabular-nums">{formatCreatedAt(outlet.created_at)}</dd>
                 </div>
               </dl>
             </section>
@@ -584,12 +805,19 @@ export const OutletDetailPage: React.FC = () => {
 
       {activeTab === 'subscription' && (
         <div className="space-y-4">
-          <div className="rounded-md border border-ops-status-pending-bg bg-ops-status-pending-bg/50 px-4 py-3 text-[13px] leading-5 text-ops-status-pending-text">
-            Subscription and entitlements are inspected per outlet (canonical scope). Plan changes,
-            trial extensions, and lifecycle actions require an outlet-level subscription write API
-            which is not yet available; the legacy business-level subscription endpoint is
-            intentionally not exposed here.
+          <div className="rounded-md border border-ops-border bg-white px-4 py-3 text-[13px] leading-5 text-ops-text-secondary">
+            Subscriptions are canonical and managed independently per outlet. Changes here only affect
+            this outlet and do not alter parent business attributes or sibling outlets.
           </div>
+
+          {subSuccess && (
+            <div
+              role="status"
+              className="rounded-md border border-ops-status-active-bg bg-ops-status-active-bg/20 p-3 text-xs text-ops-text-primary"
+            >
+              {subSuccess}
+            </div>
+          )}
 
           {entitlementsLoading && (
             <div
@@ -617,11 +845,18 @@ export const OutletDetailPage: React.FC = () => {
           {!entitlementsLoading && !entitlementsError && entitlements && (
             <>
               <section className="rounded-md border border-ops-border bg-white p-5">
-                <div className="mb-4 border-b border-ops-divider pb-3">
-                  <h2 className="text-sm font-semibold text-ops-text-primary">Current Subscription</h2>
-                  <p className="mt-0.5 text-xs text-ops-text-secondary">
-                    Resolved plan state for this outlet's parent business.
-                  </p>
+                <div className="mb-4 flex items-center justify-between border-b border-ops-divider pb-3">
+                  <div>
+                    <h2 className="text-sm font-semibold text-ops-text-primary">Current Subscription</h2>
+                    <p className="mt-0.5 text-xs text-ops-text-secondary">
+                      Authoritative subscription for this outlet.
+                    </p>
+                  </div>
+                  {!isOperator && (
+                    <Button variant="primary" onClick={openSubscriptionDrawer}>
+                      Manage Subscription
+                    </Button>
+                  )}
                 </div>
                 <div className="grid grid-cols-1 gap-4 text-[13px] sm:grid-cols-3">
                   <div>
@@ -637,17 +872,42 @@ export const OutletDetailPage: React.FC = () => {
                     <div className="text-xs font-semibold text-ops-text-secondary">Status</div>
                     <div className="mt-1">
                       <StatusBadge
-                        tone={subscriptionTone(entitlements.subscription.resolved_status)}
-                        label={subscriptionLabel(entitlements.subscription.resolved_status)}
+                        tone={
+                          entitlements.subscription.resolved_status === 'active'
+                            ? (isCancelScheduled ? 'pending' : 'active')
+                            : entitlements.subscription.resolved_status === 'past_due'
+                            ? 'pending'
+                            : entitlements.subscription.resolved_status === 'cancelled'
+                            ? 'neutral'
+                            : 'critical'
+                        }
+                        label={
+                          entitlements.subscription.resolved_status === 'active'
+                            ? (isCancelScheduled ? 'Active — cancellation scheduled' : 'Active')
+                            : entitlements.subscription.resolved_status === 'past_due'
+                            ? (isCancelScheduled ? 'Past due — cancellation scheduled' : 'Past due')
+                            : entitlements.subscription.resolved_status === 'cancelled'
+                            ? 'Cancelled'
+                            : entitlements.subscription.resolved_status === 'trial'
+                            ? 'Trial'
+                            : 'Expired'
+                        }
                       />
                     </div>
+                    {isCancelScheduled && entitlements.subscription.current_period_end && (
+                      <div className="mt-1 text-xs text-ops-status-pending-text">
+                        Effective on {new Date(entitlements.subscription.current_period_end).toLocaleDateString()}
+                      </div>
+                    )}
                   </div>
                   <div>
-                    <div className="text-xs font-semibold text-ops-text-secondary">Trial Ends</div>
+                    <div className="text-xs font-semibold text-ops-text-secondary">
+                      {entitlements.subscription.trial_ends_at ? 'Trial Ends' : 'Period Ends'}
+                    </div>
                     <div className="mt-1 font-medium text-ops-text-primary">
                       {entitlements.subscription.trial_ends_at
                         ? new Date(entitlements.subscription.trial_ends_at).toLocaleDateString()
-                        : '—'}
+                        : periodEndText}
                     </div>
                     {trialDaysRemaining !== null && (
                       <div className="mt-0.5 text-xs text-ops-text-secondary">
@@ -678,7 +938,7 @@ export const OutletDetailPage: React.FC = () => {
         <div className="fixed bottom-4 left-4 right-4 z-40 lg:left-64">
           <div className="mx-auto flex max-w-[1160px] items-center justify-between gap-4 rounded-md border border-ops-border bg-white px-4 py-2.5 shadow-ops-l2">
             <div className="flex items-center gap-2 text-[13px] font-medium text-ops-text-primary">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-ops-accent" aria-hidden="true" />
+              <span className="h-2 w-2 animate-pulse motion-reduce:animate-none rounded-full bg-ops-accent" aria-hidden="true" />
               You have unsaved changes
             </div>
             <div className="flex items-center gap-2">
@@ -691,6 +951,205 @@ export const OutletDetailPage: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Subscription Lifecycle Management Drawer */}
+      <Drawer
+        open={isSubDrawerOpen}
+        onClose={() => {
+          if (!subMutating) setIsSubDrawerOpen(false);
+        }}
+        title="Manage Outlet Subscription"
+        subtitle={outlet ? `${outlet.name} • ${outlet.business_name || 'Outlet'}` : undefined}
+        width="w-[520px]"
+        footer={
+          <div className="flex w-full items-center justify-between">
+            <Button
+              variant="secondary"
+              onClick={() => setIsSubDrawerOpen(false)}
+              disabled={subMutating}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant={subActionType === 'cancel_immediately' ? 'destructive' : 'primary'}
+              onClick={handleSubSubmit}
+              disabled={subMutating}
+            >
+              {subMutating ? 'Applying…' : 'Apply Action'}
+            </Button>
+          </div>
+        }
+      >
+        <form onSubmit={handleSubSubmit} className="space-y-4">
+          {subError && (
+            <div
+              role="alert"
+              className="rounded-md border border-ops-status-critical-bg bg-ops-status-critical-bg/40 p-3 text-xs text-ops-error"
+            >
+              {subError}
+            </div>
+          )}
+
+          <FormField id="sub-action-type" label="Lifecycle Action" required>
+            <select
+              id="sub-action-type"
+              className={opsSelectClass}
+              value={subActionType}
+              onChange={(e) => {
+                setSubActionType(e.target.value as any);
+                setSubError(null);
+              }}
+              disabled={subMutating}
+            >
+              {availableActions.map((item) => (
+                <option key={item.action} value={item.action}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </FormField>
+
+          {/* Plan selection for actions that modify plan */}
+          {(subActionType === 'activate' ||
+            subActionType === 'renew' ||
+            subActionType === 'change_plan' ||
+            subActionType === 'change_plan_new_term') && (
+            <FormField id="sub-plan-code" label="Plan" required>
+              <select
+                id="sub-plan-code"
+                className={opsSelectClass}
+                value={subPlanCode}
+                onChange={(e) => setSubPlanCode(e.target.value)}
+                disabled={subMutating}
+              >
+                {CANONICAL_PLANS.map((plan) => (
+                  <option key={plan.code} value={plan.code}>
+                    {plan.label} ({plan.code})
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          )}
+
+          {/* Trial extension date */}
+          {subActionType === 'extend_trial' && (
+            <FormField
+              id="sub-trial-ends-at"
+              label="New Trial Expiration Date (UTC)"
+              hint="Must be strictly in the future."
+              required
+            >
+              <input
+                id="sub-trial-ends-at"
+                type="datetime-local"
+                className={opsInputClass}
+                value={subTrialEndsAt}
+                onChange={(e) => setSubTrialEndsAt(e.target.value)}
+                disabled={subMutating}
+                required
+              />
+            </FormField>
+          )}
+
+          {/* Optional period start override for annual terms */}
+          {(subActionType === 'activate' ||
+            subActionType === 'renew' ||
+            subActionType === 'change_plan_new_term') && (
+            <FormField
+              id="sub-period-start"
+              label="Period Start Date Override (Optional)"
+              hint="Leave blank to default to current time. Entered in your local time and converted to UTC. If setting a historical start date, a meaningful reason is required."
+            >
+              <input
+                id="sub-period-start"
+                type="datetime-local"
+                className={opsInputClass}
+                value={subPeriodStart}
+                onChange={(e) => setSubPeriodStart(e.target.value)}
+                disabled={subMutating}
+              />
+            </FormField>
+          )}
+
+          {/* Period end date override */}
+          {(subActionType === 'activate' ||
+            subActionType === 'renew' ||
+            subActionType === 'change_plan_new_term' ||
+            subActionType === 'mark_past_due_with_extension') && (
+            <FormField
+              id="sub-period-end"
+              label={
+                subActionType === 'mark_past_due_with_extension'
+                  ? 'Extension Period End Date (Required)'
+                  : 'Period End Date Override (Optional — recommended blank)'
+              }
+              hint={
+                subActionType === 'mark_past_due_with_extension'
+                  ? 'Required strictly in the future. Entered in your local time and converted to UTC.'
+                  : 'Leave blank to let the system automatically compute the exact 1 calendar-year contractual anniversary. If manually provided, it must match exactly one calendar year after the start date.'
+              }
+              required={subActionType === 'mark_past_due_with_extension'}
+            >
+              <input
+                id="sub-period-end"
+                type="datetime-local"
+                className={opsInputClass}
+                value={subPeriodEnd}
+                onChange={(e) => setSubPeriodEnd(e.target.value)}
+                disabled={subMutating}
+                required={subActionType === 'mark_past_due_with_extension'}
+              />
+            </FormField>
+          )}
+
+          {/* Reason field */}
+          <FormField
+            id="sub-reason"
+            label="Administrative Reason"
+            hint={
+              subActionType === 'cancel_immediately' ||
+              subActionType === 'mark_past_due_with_extension'
+                ? 'Mandatory reason explaining this action.'
+                : 'Optional reason recorded in audit logs.'
+            }
+            required={
+              subActionType === 'cancel_immediately' ||
+              subActionType === 'mark_past_due_with_extension'
+            }
+          >
+            <textarea
+              id="sub-reason"
+              rows={3}
+              className="w-full rounded-md border border-ops-border bg-white p-2.5 text-[13px] text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus disabled:opacity-50"
+              value={subReason}
+              onChange={(e) => setSubReason(e.target.value)}
+              placeholder="e.g., Customer requested early cancellation due to business closure"
+              disabled={subMutating}
+            />
+          </FormField>
+        </form>
+      </Drawer>
+
+      {/* Confirmation Dialog for High-Risk Actions */}
+      {confirmConfig && (
+        <ConfirmDialog
+          open={confirmDialogOpen}
+          onClose={() => {
+            if (!subMutating) {
+              setConfirmDialogOpen(false);
+              setConfirmConfig(null);
+            }
+          }}
+          onConfirm={executeSubscriptionMutation}
+          title={confirmConfig.title}
+          consequence={confirmConfig.consequence}
+          confirmLabel={confirmConfig.confirmLabel}
+          confirmationName={confirmConfig.confirmationName}
+          confirmationPrompt={confirmConfig.confirmationPrompt}
+          isSubmitting={subMutating}
+          errorMessage={subError}
+        />
       )}
     </div>
   );

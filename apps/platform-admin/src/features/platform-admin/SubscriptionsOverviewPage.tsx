@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth, fetchPlatformBusinesses } from '@roms/api-client';
 import { PlatformBusiness } from '@roms/shared-types';
 import { SubscriptionsOverview } from './SubscriptionsOverview';
@@ -23,6 +24,8 @@ export const SubscriptionsOverviewPage: React.FC = () => {
     }
   }, [token]);
 
+  const navigate = useNavigate();
+
   useEffect(() => {
     loadBusinesses();
   }, [loadBusinesses]);
@@ -33,8 +36,8 @@ export const SubscriptionsOverviewPage: React.FC = () => {
       loading={loading}
       error={error}
       onRetry={loadBusinesses}
-      onUpdateSubscription={loadBusinesses}
       token={token}
+      onNavigateOutlet={(outletId) => navigate(`/platform/outlets/${outletId}`)}
     />
   );
 };

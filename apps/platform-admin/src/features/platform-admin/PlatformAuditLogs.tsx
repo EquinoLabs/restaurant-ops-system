@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { PlatformBusiness, PlatformAuditLogItem } from '@roms/shared-types';
 import { fetchPlatformAuditLogs } from '@roms/api-client';
 import { Copy, Info, RefreshCw } from 'lucide-react';
-import { Button, DataTable, Drawer, type DataTableColumn } from '../../components/ops-ui';
+import { Button, DataTable, Drawer, opsSelectClass, type DataTableColumn } from '../../components/ops-ui';
 
 interface PlatformAuditLogsProps {
   token: string | null;
@@ -204,7 +204,7 @@ export const PlatformAuditLogs: React.FC<PlatformAuditLogsProps> = ({ token, bus
               id="action-type-select"
               value={selectedAction}
               onChange={(e) => handleActionChange(e.target.value)}
-              className="h-8 rounded-md border border-ops-border bg-white px-2.5 text-[13px] text-ops-text-primary focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              className={`${opsSelectClass} max-w-[220px]`}
             >
               <option value="">All action types</option>
               <option value="platform.business.create">Business Provisioned</option>
@@ -236,7 +236,7 @@ export const PlatformAuditLogs: React.FC<PlatformAuditLogsProps> = ({ token, bus
               id="business-tenant-select"
               value={selectedBusinessId}
               onChange={(e) => handleBusinessChange(e.target.value)}
-              className="h-8 max-w-[200px] rounded-md border border-ops-border bg-white px-2.5 text-[13px] text-ops-text-primary focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              className={`${opsSelectClass} max-w-[200px]`}
             >
               <option value="">All businesses</option>
               {businesses.map((b) => (
@@ -258,7 +258,7 @@ export const PlatformAuditLogs: React.FC<PlatformAuditLogsProps> = ({ token, bus
               id="page-size-select"
               value={limit}
               onChange={(e) => handleLimitChange(Number(e.target.value))}
-              className="h-8 rounded-md border border-ops-border bg-white px-2.5 text-[13px] text-ops-text-primary focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
+              className={`${opsSelectClass} max-w-[130px]`}
             >
               <option value={10}>10 per page</option>
               <option value={25}>25 per page</option>
@@ -507,7 +507,7 @@ export const PlatformAuditLogs: React.FC<PlatformAuditLogsProps> = ({ token, bus
                 Captured Metadata Payload
               </div>
               {selectedLog.metadata_json ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap rounded-md border border-ops-border bg-ops-canvas p-3 font-mono text-[11px] text-ops-text-primary">
+                <pre className="max-h-[320px] overflow-auto whitespace-pre-wrap break-all rounded-md border border-ops-border bg-ops-canvas p-4 font-mono text-xs leading-5 text-ops-text-primary">
                   {JSON.stringify(selectedLog.metadata_json, null, 2)}
                 </pre>
               ) : (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PlatformBusiness, PlatformSubscriptionUpdatePayload, PlatformPlan } from '@roms/shared-types';
 import { updatePlatformSubscription, fetchPlatformPlans } from '@roms/api-client';
-import { Button, Drawer, FormField, opsInputClass } from '../../components/ops-ui';
+import { Button, Drawer, FormField, opsInputClass, opsSelectClass } from '../../components/ops-ui';
 
 export interface SubscriptionEditModalProps {
   business: PlatformBusiness | null;
@@ -446,7 +446,7 @@ export const SubscriptionEditModal: React.FC<SubscriptionEditModalProps> = ({
               id="sub-action-mode"
               value={actionType}
               onChange={(e) => setActionType(e.target.value)}
-              className={opsInputClass}
+              className={opsSelectClass}
             >
               <option value="">Standard account & limits edit (default)</option>
               <option value="activate">Activate paid subscription (1-year term)</option>
@@ -470,7 +470,7 @@ export const SubscriptionEditModal: React.FC<SubscriptionEditModalProps> = ({
                 id="sub-status"
                 value={subscriptionStatus}
                 onChange={(e) => setSubscriptionStatus(e.target.value)}
-                className={opsInputClass}
+                className={opsSelectClass}
               >
                 <option value="trial">Trial (evaluation period)</option>
                 <option value="active">Active (paid subscription)</option>
@@ -485,7 +485,7 @@ export const SubscriptionEditModal: React.FC<SubscriptionEditModalProps> = ({
               id="sub-account-status"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
-              className={opsInputClass}
+              className={opsSelectClass}
             >
               <option value="active">Active (operational access allowed)</option>
               <option value="suspended">Suspended (access restricted)</option>
@@ -499,7 +499,7 @@ export const SubscriptionEditModal: React.FC<SubscriptionEditModalProps> = ({
                 id="sub-plan"
                 value={planName}
                 onChange={(e) => setPlanName(e.target.value)}
-                className={opsInputClass}
+                className={opsSelectClass}
               >
                 <option value="">No plan tier set</option>
                 {availablePlans.map((plan) => (

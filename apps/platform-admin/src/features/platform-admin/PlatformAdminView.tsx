@@ -340,7 +340,6 @@ export const PlatformAdminView: React.FC = () => {
           loading={loading}
           error={error}
           onRetry={loadBusinesses}
-          onUpdateSubscription={loadBusinesses}
           token={token}
         />
       )}

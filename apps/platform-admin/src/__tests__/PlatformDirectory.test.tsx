@@ -199,17 +199,20 @@ describe('BusinessDirectory Component', () => {
     expect(screen.getByText('No businesses yet')).toBeDefined();
   });
 
-  it('uses status badges and View action in the data table', () => {
+  it('uses status badges and navigates on row click in the data table', () => {
+    const onViewBusiness = vi.fn();
     render(
       <BusinessDirectory
         businesses={sampleBusinesses}
         loading={false}
         error={null}
-        onViewBusiness={vi.fn()}
+        onViewBusiness={onViewBusiness}
       />
     );
     expect(screen.getAllByText('Active').length).toBeGreaterThan(0);
-    expect(screen.getByRole('button', { name: 'View' })).toBeDefined();
+    // Entire row is clickable, no redundant View button
+    fireEvent.click(screen.getByText('Valley Retreat'));
+    expect(onViewBusiness).toHaveBeenCalledWith('biz-1');
   });
 
   it('shows Add business action when provision handler is provided', () => {

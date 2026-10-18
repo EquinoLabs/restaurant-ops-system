@@ -21,7 +21,6 @@ export const DashboardPage: React.FC = () => {
     owner_email: '',
     owner_password: '',
     owner_display_name: '',
-    public_slug: '',
     currency: 'INR',
     timezone: 'Asia/Kolkata',
     address: '',
@@ -55,13 +54,8 @@ export const DashboardPage: React.FC = () => {
     e.preventDefault();
     if (!token) return;
     setProvisionError(null);
-    const slug = bizForm.public_slug.trim();
-    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim() || !slug) {
-      setProvisionError('Business name, owner details, and public slug are required.');
-      return;
-    }
-    if (!/^[a-z0-9-]+$/.test(slug)) {
-      setProvisionError('Public slug may only contain lowercase letters, numbers, and hyphens.');
+    if (!bizForm.name.trim() || !bizForm.owner_email.trim() || !bizForm.owner_password.trim() || !bizForm.owner_display_name.trim()) {
+      setProvisionError('Business name and owner details are required.');
       return;
     }
     try {
@@ -70,12 +64,11 @@ export const DashboardPage: React.FC = () => {
         {
           ...bizForm,
           name: bizForm.name.trim(),
-          public_slug: slug,
         },
         token
       );
       setIsProvisionOpen(false);
-      setBizForm({ name: '', owner_email: '', owner_password: '', owner_display_name: '', public_slug: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
+      setBizForm({ name: '', owner_email: '', owner_password: '', owner_display_name: '', currency: 'INR', timezone: 'Asia/Kolkata', address: '' });
       navigate(`/platform/businesses/${created.id}`);
     } catch (err: any) {
       setProvisionError(err.message || 'Failed to create business.');
@@ -136,28 +129,6 @@ export const DashboardPage: React.FC = () => {
                   value={bizForm.name}
                   onChange={(e) => setBizForm({ ...bizForm, name: e.target.value })}
                   placeholder="e.g. Himalayan Hospitality Pvt Ltd"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              <FormField
-                id="dash-slug"
-                label="Public slug"
-                required
-                hint="Lowercase letters, numbers, and hyphens only."
-              >
-                <input
-                  id="dash-slug"
-                  type="text"
-                  required
-                  value={bizForm.public_slug}
-                  onChange={(e) =>
-                    setBizForm({
-                      ...bizForm,
-                      public_slug: e.target.value.toLowerCase().replace(/\s+/g, '-'),
-                    })
-                  }
-                  placeholder="e.g. riverside-camp"
                   className={opsInputClass}
                 />
               </FormField>

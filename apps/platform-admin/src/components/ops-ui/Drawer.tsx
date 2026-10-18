@@ -39,7 +39,7 @@ export const Drawer: React.FC<DrawerProps> = ({
   return (
     <>
       <div
-        className="fixed inset-0 z-40 bg-[rgba(31,41,51,0.40)]"
+        className="fixed inset-0 z-40 bg-[rgba(31,41,51,0.40)] animate-ops-fade-in motion-reduce:animate-none"
         aria-hidden="true"
         onClick={onClose}
       />
@@ -49,7 +49,7 @@ export const Drawer: React.FC<DrawerProps> = ({
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className={`fixed inset-y-0 right-0 z-50 flex max-w-full flex-col border-l border-ops-border bg-white shadow-ops-l2 ${width} ${className}`}
+        className={`fixed inset-y-0 right-0 z-50 flex max-w-full flex-col border-l border-ops-border bg-white shadow-ops-l2 animate-ops-drawer-enter motion-reduce:animate-none ${width} ${className}`}
       >
         <div className="flex items-start justify-between border-b border-ops-border p-5 select-none">
           <div className="min-w-0">

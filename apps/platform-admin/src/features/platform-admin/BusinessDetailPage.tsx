@@ -5,13 +5,11 @@ import {
   fetchPlatformBusiness,
   updatePlatformBusinessProfile,
   createPlatformOutlet,
-  assignPlatformOwner,
   fetchPlatformAuditLogs,
 } from '@roms/api-client';
 import {
   PlatformBusiness,
   PlatformOutletCreatePayload,
-  PlatformAssignOwnerPayload,
   PlatformAuditLogItem,
 } from '@roms/shared-types';
 import { ArrowLeft, ExternalLink, Loader2, Pencil, Plus, X } from 'lucide-react';
@@ -24,15 +22,15 @@ import {
   Tabs,
   FormField,
   opsInputClass,
+  opsSelectClass,
   type DataTableColumn,
 } from '../../components/ops-ui';
 import {
   accountLabel,
   accountTone,
   formatCreatedAt,
-  subscriptionLabel,
-  subscriptionTone,
 } from './BusinessDirectory';
+import { SubscriptionHistoryTab } from './SubscriptionHistoryTab';
 
 type BusinessTab = 'overview' | 'outlets' | 'subscription' | 'activity';
 
@@ -48,42 +46,32 @@ function formatDateTime(iso: string): string {
   });
 }
 
-function planDisplayName(planName?: string | null): string {
-  if (!planName) return 'current';
-  return planName.charAt(0).toUpperCase() + planName.slice(1);
-}
-
 function SubscriptionSummaryRows({ business }: { business: PlatformBusiness }) {
   const outlets = business.outlets || [];
+  const activeOutlets = outlets.filter((o) => o.status === 'active').length;
   return (
     <dl className="flex flex-col text-[13px]">
-      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
-        <dt className="text-ops-text-secondary">Plan</dt>
-        <dd className="font-medium text-ops-text-primary">{business.plan_name || '—'}</dd>
+      <div className="flex min-h-[36px] items-center justify-between gap-3 border-b border-ops-divider py-2">
+        <dt className="w-40 shrink-0 text-ops-text-secondary">Active outlets</dt>
+        <dd className="font-medium text-ops-text-primary tabular-nums">
+          {activeOutlets} / {outlets.length}
+        </dd>
       </div>
-      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
-        <dt className="text-ops-text-secondary">Status</dt>
+      <div className="flex min-h-[36px] items-center justify-between gap-3 border-b border-ops-divider py-2">
+        <dt className="w-40 shrink-0 text-ops-text-secondary">Subscription scope</dt>
+        <dd className="font-medium text-ops-text-primary">Managed per outlet</dd>
+      </div>
+      <div className="flex min-h-[36px] items-center justify-between gap-3 py-2">
+        <dt className="w-40 shrink-0 text-ops-text-secondary">Manage subscriptions</dt>
         <dd>
-          <StatusBadge
-            tone={subscriptionTone(business.subscription_status)}
-            label={subscriptionLabel(business.subscription_status)}
-          />
+          <Link
+            to="/platform/subscriptions"
+            className="font-medium text-ops-accent hover:underline text-[13px]"
+          >
+            Open Subscriptions
+          </Link>
         </dd>
       </div>
-      <div className="flex items-center justify-between gap-3 border-b border-ops-divider py-2.5">
-        <dt className="text-ops-text-secondary">Outlet limit</dt>
-        <dd className="font-mono text-ops-text-primary tabular-nums">
-          {outlets.length} / {business.max_outlets ?? '∞'} used
-        </dd>
-      </div>
-      {business.trial_ends_at && (
-        <div className="flex items-center justify-between gap-3 py-2.5">
-          <dt className="text-ops-text-secondary">Trial ends</dt>
-          <dd className="font-mono text-ops-text-primary">
-            {formatCreatedAt(business.trial_ends_at)}
-          </dd>
-        </div>
-      )}
     </dl>
   );
 }
@@ -116,16 +104,6 @@ export const BusinessDetailPage: React.FC = () => {
   });
   const [outletSaving, setOutletSaving] = useState(false);
   const [outletError, setOutletError] = useState<string | null>(null);
-
-  const [ownerTarget, setOwnerTarget] = useState<{ businessId: string; outletId: string; outletName: string } | null>(null);
-  const [ownerForm, setOwnerForm] = useState<PlatformAssignOwnerPayload>({
-    email: '',
-    password: '',
-    display_name: '',
-  });
-  const [ownerSaving, setOwnerSaving] = useState(false);
-  const [ownerError, setOwnerError] = useState<string | null>(null);
-  const [ownerSuccess, setOwnerSuccess] = useState<string | null>(null);
 
   const [activity, setActivity] = useState<PlatformAuditLogItem[]>([]);
   const [activityTotal, setActivityTotal] = useState(0);
@@ -233,28 +211,6 @@ export const BusinessDetailPage: React.FC = () => {
     }
   };
 
-  const handleAssignOwner = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!token || !ownerTarget) return;
-    if (!ownerForm.email?.trim() || !ownerForm.password?.trim() || !ownerForm.display_name?.trim()) {
-      setOwnerError('Email, password, and display name are required to provision an owner account.');
-      return;
-    }
-    try {
-      setOwnerSaving(true);
-      setOwnerError(null);
-      await assignPlatformOwner(ownerTarget.businessId, ownerForm, token);
-      setOwnerSuccess(`Owner user '${ownerForm.email}' assigned to outlet '${ownerTarget.outletName}'.`);
-      setOwnerTarget(null);
-      setOwnerForm({ outlet_id: '', email: '', password: '', display_name: '' });
-      await loadBusiness();
-    } catch (err: any) {
-      setOwnerError(err.message || 'Failed to assign owner.');
-    } finally {
-      setOwnerSaving(false);
-    }
-  };
-
   if (loading) {
     return <StateBlock variant="loading" title="Loading business details..." />;
   }
@@ -291,10 +247,6 @@ export const BusinessDetailPage: React.FC = () => {
 
   const outlets = business.outlets || [];
   const activeOutlets = outlets.filter((o) => o.status === 'active').length;
-  const hasQuota = typeof business.max_outlets === 'number' && business.max_outlets > 0;
-  const capacityPct = hasQuota
-    ? Math.min(100, Math.round((outlets.length / (business.max_outlets as number)) * 100))
-    : null;
 
   const openAddOutlet = () => {
     setOutletError(null);
@@ -312,7 +264,8 @@ export const BusinessDetailPage: React.FC = () => {
     {
       key: 'outlet',
       header: 'Outlet',
-      width: '24%',
+      width: '28%',
+      getTitle: (outlet) => outlet.name,
       render: (outlet) => (
         <span className="truncate font-medium text-ops-text-primary">{outlet.name}</span>
       ),
@@ -320,13 +273,14 @@ export const BusinessDetailPage: React.FC = () => {
     {
       key: 'publicUrl',
       header: 'Public URL',
-      width: '20%',
+      width: '24%',
       render: (outlet) => (
         <a
           href={`/m/${outlet.public_slug}`}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-1 font-mono text-[12px] text-ops-accent hover:underline"
+          onClick={(e) => e.stopPropagation()}
         >
           {`/m/${outlet.public_slug}`}
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -336,7 +290,7 @@ export const BusinessDetailPage: React.FC = () => {
     {
       key: 'address',
       header: 'Address',
-      width: '22%',
+      width: '24%',
       render: (outlet) => (
         <span className="block truncate text-ops-text-secondary">{outlet.address || '—'}</span>
       ),
@@ -355,37 +309,6 @@ export const BusinessDetailPage: React.FC = () => {
       width: '12%',
       render: (outlet) => (
         <span className="text-ops-text-secondary">{formatCreatedAt(outlet.created_at)}</span>
-      ),
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      align: 'right',
-      width: '16%',
-      render: (outlet) => (
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(`/platform/outlets/${outlet.id}`)}
-            className="text-[13px] font-medium text-ops-accent hover:underline"
-          >
-            Manage
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setOwnerError(null);
-              setOwnerTarget({
-                businessId: business.id,
-                outletId: outlet.id,
-                outletName: outlet.name,
-              });
-            }}
-            className="text-[13px] font-medium text-ops-text-secondary hover:text-ops-text-primary"
-          >
-            Assign Owner
-          </button>
-        </div>
       ),
     },
   ];
@@ -457,10 +380,6 @@ export const BusinessDetailPage: React.FC = () => {
                 {business.name}
               </h1>
               <StatusBadge tone={accountTone(business.status)} label={accountLabel(business.status)} />
-              <StatusBadge
-                tone={subscriptionTone(business.subscription_status)}
-                label={subscriptionLabel(business.subscription_status)}
-              />
             </div>
             <p className="text-xs text-ops-text-secondary">
               ID <span className="font-mono text-ops-text-primary">{business.id}</span>
@@ -486,23 +405,6 @@ export const BusinessDetailPage: React.FC = () => {
           />
         </div>
       </div>
-
-      {ownerSuccess && (
-        <div
-          role="status"
-          className="flex items-center justify-between gap-3 rounded-md border border-ops-status-active-bg bg-ops-status-active-bg/60 px-4 py-3 text-[13px] text-ops-status-active-text"
-        >
-          <span>{ownerSuccess}</span>
-          <button
-            type="button"
-            onClick={() => setOwnerSuccess(null)}
-            aria-label="Dismiss"
-            className="rounded p-1 text-ops-text-secondary hover:bg-white hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
-          >
-            <X className="h-4 w-4" aria-hidden="true" />
-          </button>
-        </div>
-      )}
 
       {activeTab === 'overview' && (
         <div className="grid gap-4 lg:grid-cols-12">
@@ -568,7 +470,7 @@ export const BusinessDetailPage: React.FC = () => {
             <div className="mb-4 border-b border-ops-divider pb-3">
               <h2 className="text-sm font-semibold text-ops-text-primary">Subscription</h2>
               <p className="mt-0.5 text-xs text-ops-text-secondary">
-                Current commercial state for this business.
+                Subscriptions are outlet-scoped under Stage 3.
               </p>
             </div>
             <SubscriptionSummaryRows business={business} />
@@ -587,9 +489,7 @@ export const BusinessDetailPage: React.FC = () => {
                 </span>
               </div>
               <p className="text-xs text-ops-text-secondary">
-                {hasQuota
-                  ? `${outlets.length} of ${business.max_outlets} allowable outlets provisioned on ${planDisplayName(business.plan_name)} plan.`
-                  : `${outlets.length} outlet${outlets.length === 1 ? '' : 's'} provisioned.`}
+                {` ${outlets.length} outlet${outlets.length === 1 ? '' : 's'} provisioned.`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -615,26 +515,11 @@ export const BusinessDetailPage: React.FC = () => {
               rows={outlets}
               rowKey={(outlet) => outlet.id}
               minWidth="840px"
+              onRowClick={(outlet) => navigate(`/platform/outlets/${outlet.id}`)}
               footer={
-                <>
-                  <span>
-                    Showing {outlets.length} of {outlets.length} provisioned records
-                  </span>
-                  {hasQuota && (
-                    <span className="flex items-center gap-2">
-                      <span className="font-semibold text-ops-text-primary tabular-nums">
-                        Plan Capacity: {capacityPct}% utilized
-                      </span>
-                      <span className="text-ops-text-secondary">•</span>
-                      <Link
-                        to="/platform/plans"
-                        className="font-medium text-ops-accent hover:underline"
-                      >
-                        Upgrade to add more
-                      </Link>
-                    </span>
-                  )}
-                </>
+                <span>
+                  Showing {outlets.length} of {outlets.length} provisioned records
+                </span>
               }
             />
           )}
@@ -642,32 +527,37 @@ export const BusinessDetailPage: React.FC = () => {
       )}
 
       {activeTab === 'subscription' && (
-        <div className="grid gap-4 lg:grid-cols-12">
-          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-7">
-            <div className="mb-4 border-b border-ops-divider pb-3">
-              <h2 className="text-sm font-semibold text-ops-text-primary">Subscription</h2>
-              <p className="mt-0.5 text-xs text-ops-text-secondary">
-                Plan, status, outlet quota, and trial window for this business.
-              </p>
-            </div>
-            <SubscriptionSummaryRows business={business} />
-          </section>
+        <div className="space-y-6">
+          <div className="grid gap-4 lg:grid-cols-12">
+            <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-7">
+              <div className="mb-4 border-b border-ops-divider pb-3">
+                <h2 className="text-sm font-semibold text-ops-text-primary">Subscription</h2>
+                <p className="mt-0.5 text-xs text-ops-text-secondary">
+                  Subscriptions are outlet-scoped under Stage 3 (Owner Decision 002).
+                </p>
+              </div>
+              <SubscriptionSummaryRows business={business} />
+            </section>
 
-          <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-5">
-            <div className="mb-4 border-b border-ops-divider pb-3">
-              <h2 className="text-sm font-semibold text-ops-text-primary">Manage subscription</h2>
-            </div>
-            <p className="text-[13px] leading-5 text-ops-text-secondary">
-              Plan changes, billing cycles, trial windows, and status transitions are managed
-              from the Subscriptions page.
-            </p>
-            <Button
-              variant="secondary"
-              className="mt-4"
-              onClick={() => navigate('/platform/subscriptions')}
-            >
-              Open Subscriptions
-            </Button>
+            <section className="rounded-md border border-ops-border bg-white p-5 lg:col-span-5">
+              <div className="mb-4 border-b border-ops-divider pb-3">
+                <h2 className="text-sm font-semibold text-ops-text-primary">Manage subscriptions</h2>
+              </div>
+              <p className="text-[13px] leading-5 text-ops-text-secondary">
+                Subscriptions are managed on the central Subscriptions page.
+              </p>
+              <Button
+                variant="secondary"
+                className="mt-4"
+                onClick={() => navigate('/platform/subscriptions')}
+              >
+                Open Subscriptions
+              </Button>
+            </section>
+          </div>
+
+          <section className="rounded-md border border-ops-border bg-white p-5">
+            <SubscriptionHistoryTab business={business} />
           </section>
         </div>
       )}
@@ -795,7 +685,7 @@ export const BusinessDetailPage: React.FC = () => {
                 <select
                   value={outletForm.plan_code ?? 'trial'}
                   onChange={(e) => setOutletForm({ ...outletForm, plan_code: e.target.value })}
-                  className={opsInputClass}
+                  className={opsSelectClass}
                 >
                   <option value="trial">Trial — 30-day trial on Starter POS</option>
                   <option value="starter_pos">Starter POS — active subscription</option>
@@ -823,93 +713,6 @@ export const BusinessDetailPage: React.FC = () => {
                 </Button>
                 <Button type="submit" variant="primary" disabled={outletSaving}>
                   {outletSaving ? 'Creating...' : 'Create Outlet'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {ownerTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-[rgba(31,41,51,0.40)]" aria-hidden="true" />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="assign-owner-title"
-            className="relative flex max-h-[90vh] w-full max-w-[480px] flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
-          >
-            <div className="flex items-center justify-between border-b border-ops-border p-5">
-              <h2 id="assign-owner-title" className="text-base font-semibold text-ops-text-primary">
-                Assign Owner for {ownerTarget.outletName}
-              </h2>
-              <button
-                type="button"
-                onClick={() => setOwnerTarget(null)}
-                className="rounded p-1 text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary focus:outline-none focus:ring-2 focus:ring-ops-accent-focus"
-                aria-label="Close"
-                disabled={ownerSaving}
-              >
-                <X className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-
-            <form onSubmit={handleAssignOwner} className="flex-1 space-y-4 overflow-y-auto p-5">
-              <FormField id="owner-display-name" label="Owner Display Name" required>
-                <input
-                  type="text"
-                  required
-                  value={ownerForm.display_name || ''}
-                  onChange={(e) => setOwnerForm({ ...ownerForm, display_name: e.target.value })}
-                  placeholder="e.g. Ramesh Kumar"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              <FormField id="owner-email" label="Owner Login Email" required>
-                <input
-                  type="email"
-                  required
-                  value={ownerForm.email || ''}
-                  onChange={(e) => setOwnerForm({ ...ownerForm, email: e.target.value })}
-                  placeholder="owner@restaurant.com"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              <FormField
-                id="owner-password"
-                label="Initial Password"
-                required
-                hint="Minimum 8 characters for provisioning."
-              >
-                <input
-                  type="password"
-                  required
-                  value={ownerForm.password || ''}
-                  onChange={(e) => setOwnerForm({ ...ownerForm, password: e.target.value })}
-                  placeholder="••••••••••••"
-                  className={opsInputClass}
-                />
-              </FormField>
-
-              {ownerError && (
-                <p role="alert" className="text-xs text-ops-error">
-                  {ownerError}
-                </p>
-              )}
-
-              <div className="flex justify-end gap-2 border-t border-ops-border pt-4">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setOwnerTarget(null)}
-                  disabled={ownerSaving}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" variant="primary" disabled={ownerSaving}>
-                  {ownerSaving ? 'Assigning...' : 'Assign Owner Account'}
                 </Button>
               </div>
             </form>

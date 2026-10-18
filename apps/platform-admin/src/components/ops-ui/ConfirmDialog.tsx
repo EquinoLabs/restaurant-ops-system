@@ -54,7 +54,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   return (
     <>
       <div
-        className="fixed inset-0 z-50 bg-[rgba(31,41,51,0.40)]"
+        className="fixed inset-0 z-50 bg-[rgba(31,41,51,0.40)] animate-ops-fade-in motion-reduce:animate-none"
         aria-hidden="true"
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -64,7 +64,7 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           aria-modal="true"
           aria-labelledby={titleId}
           tabIndex={-1}
-          className="flex max-h-full w-full max-w-[480px] flex-col rounded-md border border-ops-border bg-white shadow-ops-l2"
+          className="flex max-h-full w-full max-w-[480px] flex-col rounded-md border border-ops-border bg-white shadow-ops-l2 animate-ops-dialog-enter motion-reduce:animate-none"
         >
           <div className="flex items-center justify-between border-b border-ops-border p-5">
             <div className="flex items-center gap-2">

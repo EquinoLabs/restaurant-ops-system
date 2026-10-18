@@ -74,9 +74,9 @@ function NavButton({
       type="button"
       onClick={() => onSelect(item.id)}
       aria-current={isActive ? 'page' : undefined}
-      className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-ops-accent-focus ${
+      className={`relative flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] font-medium transition-colors duration-100 ease-in-out focus:outline-none focus:ring-2 focus:ring-ops-accent-focus focus:ring-offset-1 ${
         isActive
-          ? 'bg-ops-accent/10 text-ops-accent'
+          ? 'bg-ops-accent/10 text-ops-accent font-semibold'
           : 'text-ops-text-secondary hover:bg-ops-canvas hover:text-ops-text-primary'
       }`}
     >

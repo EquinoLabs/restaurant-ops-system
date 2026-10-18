@@ -1,5 +1,5 @@
 import uuid
-from typing import List, Optional
+from typing import List, Optional, Any, Union
 from sqlalchemy.orm import Session, joinedload
 from app.modules.businesses.models import Business
 from app.modules.outlets.models import Outlet
@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from app.db.base import utc_now
 from app.modules.audit.service import log_audit
 from app.modules.subscriptions.models import Plan, BusinessSubscription, OutletSubscription
+from app.modules.subscriptions.schemas import PlatformOutletSubscriptionUpdate
 from app.modules.subscriptions.service import EntitlementService, compute_annual_period_end, ensure_utc
 
 PLAN_MAP = {
@@ -80,15 +81,17 @@ def list_canonical_plans(db: Session) -> List[Plan]:
     )
 
 
-def list_business_subscriptions(db: Session, business_id: uuid.UUID) -> List[BusinessSubscription]:
+def list_business_subscriptions(db: Session, business_id: uuid.UUID) -> List[OutletSubscription]:
     business = db.query(Business).filter(Business.id == business_id).first()
     if not business:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
+
+    # Canonical Stage 3 read path: return only canonical outlet_subscriptions
     return (
-        db.query(BusinessSubscription)
-        .options(joinedload(BusinessSubscription.plan))
-        .filter(BusinessSubscription.business_id == business_id)
-        .order_by(BusinessSubscription.created_at.desc())
+        db.query(OutletSubscription)
+        .options(joinedload(OutletSubscription.plan))
+        .filter(OutletSubscription.business_id == business_id)
+        .order_by(OutletSubscription.created_at.desc())
         .all()
     )
 
@@ -204,36 +207,6 @@ def create_platform_business(
 
     db.refresh(business)
     return business
-
-
-def _propagate_subscription_to_outlets(
-    db: Session, business: Business, curr_sub_after: Optional[BusinessSubscription]
-) -> int:
-    outlet_subs = (
-        db.query(OutletSubscription)
-        .filter(
-            OutletSubscription.business_id == business.id,
-            OutletSubscription.is_current == True,
-        )
-        .all()
-    )
-
-    for outlet_sub in outlet_subs:
-        if curr_sub_after is not None:
-            outlet_sub.plan_id = curr_sub_after.plan_id
-            outlet_sub.status = curr_sub_after.status
-            outlet_sub.trial_ends_at = curr_sub_after.trial_ends_at
-            outlet_sub.current_period_start = curr_sub_after.current_period_start
-            outlet_sub.current_period_end = curr_sub_after.current_period_end
-            outlet_sub.cancel_at_period_end = curr_sub_after.cancel_at_period_end
-            outlet_sub.cancelled_at = curr_sub_after.cancelled_at
-        else:
-            outlet_sub.status = business.subscription_status or outlet_sub.status
-            outlet_sub.trial_ends_at = business.trial_ends_at
-
-    if outlet_subs:
-        db.flush()
-    return len(outlet_subs)
 
 
 def update_business_subscription(
@@ -647,9 +620,6 @@ def update_business_subscription(
         BusinessSubscription.is_current == True
     ).first()
 
-    outlet_sync_count = _propagate_subscription_to_outlets(db, business, curr_sub_after)
-    audit_metadata["outlet_subscriptions_synced"] = outlet_sync_count
-
     after_state = {
         "status": business.status,
         "subscription_status": business.subscription_status,
@@ -727,10 +697,17 @@ def add_outlet_to_business(
         plan = resolve_plan(db, "starter_pos")
         sub_status = "trial"
         trial_ends = now + timedelta(days=30)
+        period_start = None
+        period_end = None
     else:
         plan = resolve_plan(db, data.plan_code)
         sub_status = "active"
         trial_ends = None
+        # Active (paid) subscriptions need a period window so the resolver
+        # can evaluate them correctly. Default to a 1-year term from creation
+        # when the caller does not supply explicit dates (Decision 002).
+        period_start = now
+        period_end = compute_annual_period_end(now)
 
     outlet = Outlet(
         business_id=business_id,
@@ -754,6 +731,8 @@ def add_outlet_to_business(
         status=sub_status,
         is_current=True,
         trial_ends_at=trial_ends,
+        current_period_start=period_start,
+        current_period_end=period_end,
         created_at=now,
         updated_at=now,
     )
@@ -773,43 +752,44 @@ def add_outlet_to_business(
         if not existing_m:
             db.add(OutletMembership(user_id=owner.user_id, outlet_id=outlet.id, role="owner"))
 
-    # Optional manager assignment (S3): assign manager role on the new outlet
+    # Optional manager assignment (S3): assign an existing, active business manager
+    # to the new outlet. Manager credential provisioning is not approved, so only
+    # existing users who already hold a BusinessMembership(role="manager") for this
+    # business may be assigned.
+    manager_user_id: Optional[uuid.UUID] = None
     if data.manager is not None:
-        manager_user: Optional[User] = None
-        if data.manager.user_id is not None:
-            manager_user = db.query(User).filter(User.id == data.manager.user_id).first()
-            if not manager_user:
-                raise NotFoundError(f"User with ID '{data.manager.user_id}' not found.")
-        elif data.manager.email is not None:
-            mgr_email = data.manager.email.strip().lower()
-            manager_user = db.query(User).filter(User.email == mgr_email).first()
-            if not manager_user:
-                if not data.manager.password or not data.manager.display_name:
-                    raise ValidationError("password and display_name are required when creating a new manager user.")
-                manager_user = User(
-                    email=mgr_email,
-                    password_hash=hash_password(data.manager.password),
-                    display_name=data.manager.display_name.strip(),
-                    status="active",
-                    is_platform_admin=False,
-                )
-                db.add(manager_user)
-                db.flush()
+        manager_user = db.query(User).filter(User.id == data.manager.user_id).first()
+        if not manager_user:
+            raise NotFoundError(f"User with ID '{data.manager.user_id}' not found.")
+        if manager_user.status != "active":
+            raise ValidationError(
+                f"Cannot assign inactive or suspended user '{manager_user.id}' as outlet manager."
+            )
+        # Verify the user is a business manager for the same business
+        biz_mgr = db.query(BusinessMembership).filter(
+            BusinessMembership.business_id == business_id,
+            BusinessMembership.user_id == manager_user.id,
+            BusinessMembership.role == "manager"
+        ).first()
+        if not biz_mgr:
+            raise ValidationError(
+                f"User '{manager_user.id}' is not a manager of this business and cannot be assigned as an outlet manager."
+            )
+        manager_user_id = manager_user.id
 
-        if manager_user:
-            existing_mgr = db.query(OutletMembership).filter(
-                OutletMembership.user_id == manager_user.id,
-                OutletMembership.outlet_id == outlet.id
-            ).first()
-            if existing_mgr:
-                existing_mgr.role = "manager"
-                existing_mgr.updated_at = utc_now()
-            else:
-                db.add(OutletMembership(
-                    user_id=manager_user.id,
-                    outlet_id=outlet.id,
-                    role="manager",
-                ))
+        existing_mgr = db.query(OutletMembership).filter(
+            OutletMembership.user_id == manager_user.id,
+            OutletMembership.outlet_id == outlet.id
+        ).first()
+        if existing_mgr:
+            existing_mgr.role = "manager"
+            existing_mgr.updated_at = utc_now()
+        else:
+            db.add(OutletMembership(
+                user_id=manager_user.id,
+                outlet_id=outlet.id,
+                role="manager",
+            ))
 
     log_audit(
         db=db,
@@ -828,6 +808,7 @@ def add_outlet_to_business(
             "plan_code": plan.code,
             "subscription_status": sub_status,
             "trial_ends_at": trial_ends.isoformat() if trial_ends else None,
+            "manager_user_id": str(manager_user_id) if manager_user_id is not None else None,
         }
     )
 
@@ -843,7 +824,10 @@ def assign_owner_to_business(
     Creates or assigns a User as an 'owner' for a Business (not tied to any specific outlet).
     Per Decision 003: exactly-one-owner invariant enforced at service layer.
     """
-    biz = db.query(Business).filter(Business.id == business_id).first()
+    if db.bind and db.bind.dialect.name == "postgresql":
+        biz = db.query(Business).with_for_update().filter(Business.id == business_id).first()
+    else:
+        biz = db.query(Business).filter(Business.id == business_id).first()
     if not biz:
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
 
@@ -1530,14 +1514,24 @@ def update_business_profile(
         raise NotFoundError(f"Business with ID '{business_id}' not found.")
 
     before_name = business.name
+    before_status = business.status
     new_name = data.name.strip()
     if not new_name:
         raise ValidationError("Business name cannot be empty.")
 
     business.name = new_name
+
+    status_changed = False
+    if data.status is not None:
+        clean_status = data.status.strip().lower()
+        if clean_status != business.status:
+            business.status = clean_status
+            status_changed = True
+
     db.flush()
 
     try:
+        # Standard profile update audit log
         log_audit(
             db=db,
             business_id=business.id,
@@ -1548,10 +1542,44 @@ def update_business_profile(
             entity_id=business.id,
             metadata_json={
                 "outcome": "success",
-                "before": {"name": before_name},
-                "after": {"name": business.name},
+                "before": {"name": before_name, "status": before_status},
+                "after": {"name": business.name, "status": business.status},
             }
         )
+
+        # Emit suspend or reactivate audit log only when status actually changes
+        if status_changed:
+            if before_status != "suspended" and business.status == "suspended":
+                log_audit(
+                    db=db,
+                    business_id=business.id,
+                    outlet_id=None,
+                    actor_user_id=actor_user_id,
+                    action="platform.business.suspend",
+                    entity_type="business",
+                    entity_id=business.id,
+                    metadata_json={
+                        "outcome": "success",
+                        "before": {"status": before_status},
+                        "after": {"status": business.status},
+                    }
+                )
+            elif before_status == "suspended" and business.status == "active":
+                log_audit(
+                    db=db,
+                    business_id=business.id,
+                    outlet_id=None,
+                    actor_user_id=actor_user_id,
+                    action="platform.business.reactivate",
+                    entity_type="business",
+                    entity_id=business.id,
+                    metadata_json={
+                        "outcome": "success",
+                        "before": {"status": before_status},
+                        "after": {"status": business.status},
+                    }
+                )
+
         db.commit()
     except Exception:
         db.rollback()
@@ -1686,3 +1714,423 @@ def update_outlet_profile(
 
     db.refresh(outlet)
     return outlet
+
+
+def update_outlet_subscription(
+    db: Session,
+    outlet_id: uuid.UUID,
+    data: PlatformOutletSubscriptionUpdate,
+    actor_user_id: Optional[uuid.UUID] = None
+) -> OutletSubscription:
+    """
+    Updates outlet subscription lifecycle, plan, and audit history.
+    Enforces atomic row replacement, strict 1-calendar-year annual commitments,
+    action-specific validation, and single-current-row invariant via pessimistic row locking.
+    Does NOT affect sibling outlets or mutate business-level subscription columns.
+    """
+    if db.bind and db.bind.dialect.name == "postgresql":
+        outlet = db.query(Outlet).with_for_update().filter(Outlet.id == outlet_id).first()
+    else:
+        outlet = db.query(Outlet).filter(Outlet.id == outlet_id).first()
+
+    if not outlet:
+        raise NotFoundError(f"Outlet with ID '{outlet_id}' not found.")
+
+    business = db.query(Business).filter(Business.id == outlet.business_id).first()
+    if not business:
+        raise NotFoundError(f"Parent business for outlet '{outlet_id}' not found.")
+
+    curr_sub = db.query(OutletSubscription).options(
+        joinedload(OutletSubscription.plan)
+    ).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+
+    now = utc_now()
+    action_type = (data.action_type or "").strip()
+    if not action_type:
+        raise ValidationError("action_type is required for outlet subscription lifecycle management.")
+
+    before_state = {
+        "status": curr_sub.status if curr_sub else None,
+        "plan_code": curr_sub.plan.code if (curr_sub and curr_sub.plan) else None,
+        "plan_name": curr_sub.plan.name if (curr_sub and curr_sub.plan) else None,
+        "trial_ends_at": curr_sub.trial_ends_at.isoformat() if (curr_sub and curr_sub.trial_ends_at) else None,
+        "current_period_start": curr_sub.current_period_start.isoformat() if (curr_sub and curr_sub.current_period_start) else None,
+        "current_period_end": curr_sub.current_period_end.isoformat() if (curr_sub and curr_sub.current_period_end) else None,
+        "cancel_at_period_end": curr_sub.cancel_at_period_end if curr_sub else False,
+        "cancelled_at": curr_sub.cancelled_at.isoformat() if (curr_sub and curr_sub.cancelled_at) else None,
+    }
+
+    audit_action = f"platform.outlet_subscription.{action_type}"
+    audit_metadata: dict = {"reason": data.reason}
+    resulting_sub: Optional[OutletSubscription] = None
+
+    if action_type == "activate":
+        # Reject irrelevant fields
+        if data.trial_ends_at is not None:
+            raise ValidationError("trial_ends_at cannot be updated during activation.")
+
+        plan_identifier = data.plan_code or data.plan_name or (curr_sub.plan.code if (curr_sub and curr_sub.plan) else None)
+        if not plan_identifier:
+            raise ValidationError("A valid plan_code or plan_name is required for activation.")
+        target_plan = resolve_plan(db, plan_identifier)
+
+        # Start date
+        if data.current_period_start is not None:
+            start_dt = ensure_utc(data.current_period_start)
+            if start_dt < now - timedelta(days=1):
+                reason_clean = (data.reason or "").strip()
+                if not reason_clean:
+                    raise ValidationError("A meaningful administrative reason is required when supplying a historical contractual start date.")
+                audit_metadata["historical_start_reason"] = reason_clean
+        else:
+            start_dt = now
+
+        # Free QR special case: non-expiring if period-end is omitted
+        if target_plan.code == "free_qr" and data.current_period_end is None:
+            end_dt = None
+        else:
+            expected_end = compute_annual_period_end(start_dt)
+            if data.current_period_end is not None:
+                end_dt = ensure_utc(data.current_period_end)
+                if end_dt != expected_end:
+                    raise ValidationError(
+                        f"current_period_end must be exactly one calendar year after current_period_start ({expected_end.isoformat()}). Got {end_dt.isoformat()}."
+                    )
+            else:
+                end_dt = expected_end
+
+            if end_dt <= now:
+                raise ValidationError("current_period_end must be strictly in the future.")
+
+        # Atomic row swap
+        if curr_sub:
+            curr_sub.is_current = False
+
+        resulting_sub = OutletSubscription(
+            outlet_id=outlet.id,
+            business_id=outlet.business_id,
+            plan_id=target_plan.id,
+            status="active",
+            is_current=True,
+            trial_ends_at=None,
+            current_period_start=start_dt,
+            current_period_end=end_dt,
+            cancel_at_period_end=False,
+            cancelled_at=None,
+        )
+        db.add(resulting_sub)
+
+    elif action_type == "renew":
+        if data.trial_ends_at is not None:
+            raise ValidationError("trial_ends_at cannot be updated during renewal.")
+
+        curr_period_end_utc = ensure_utc(curr_sub.current_period_end) if (curr_sub and curr_sub.current_period_end) else None
+        is_timely = (
+            curr_sub is not None
+            and curr_sub.status == "active"
+            and curr_period_end_utc is not None
+            and now < curr_period_end_utc
+        )
+
+        plan_identifier = data.plan_code or data.plan_name or (curr_sub.plan.code if (curr_sub and curr_sub.plan) else None)
+        target_plan = resolve_plan(db, plan_identifier) if plan_identifier else (curr_sub.plan if curr_sub else None)
+        if not target_plan:
+            raise ValidationError("A valid plan is required for renewal.")
+
+        if is_timely:
+            start_dt = curr_period_end_utc
+            expected_end = compute_annual_period_end(start_dt)
+            if data.current_period_end is not None:
+                end_dt = ensure_utc(data.current_period_end)
+                if end_dt != expected_end:
+                    raise ValidationError(
+                        f"current_period_end must be exactly one calendar year after contractual anniversary ({expected_end.isoformat()}). Got {end_dt.isoformat()}."
+                    )
+            else:
+                end_dt = expected_end
+
+            curr_sub.is_current = False
+            resulting_sub = OutletSubscription(
+                outlet_id=outlet.id,
+                business_id=outlet.business_id,
+                plan_id=target_plan.id,
+                status="active",
+                is_current=True,
+                trial_ends_at=None,
+                current_period_start=start_dt,
+                current_period_end=end_dt,
+                cancel_at_period_end=False,
+                cancelled_at=None,
+            )
+            db.add(resulting_sub)
+        else:
+            # Late renewal
+            if data.current_period_start is not None:
+                start_dt = ensure_utc(data.current_period_start)
+                if start_dt < now - timedelta(days=1):
+                    reason_clean = (data.reason or "").strip()
+                    if not reason_clean:
+                        raise ValidationError("A meaningful administrative reason is required when supplying a historical contractual start date.")
+                    audit_metadata["historical_start_reason"] = reason_clean
+            else:
+                start_dt = now
+
+            if target_plan.code == "free_qr" and data.current_period_end is None:
+                end_dt = None
+            else:
+                expected_end = compute_annual_period_end(start_dt)
+                if data.current_period_end is not None:
+                    end_dt = ensure_utc(data.current_period_end)
+                    if end_dt != expected_end:
+                        raise ValidationError(
+                            f"current_period_end must be exactly one calendar year after current_period_start ({expected_end.isoformat()}). Got {end_dt.isoformat()}."
+                        )
+                else:
+                    end_dt = expected_end
+
+                if end_dt <= now:
+                    raise ValidationError("current_period_end must be strictly in the future.")
+
+            if curr_sub:
+                curr_sub.is_current = False
+
+            resulting_sub = OutletSubscription(
+                outlet_id=outlet.id,
+                business_id=outlet.business_id,
+                plan_id=target_plan.id,
+                status="active",
+                is_current=True,
+                trial_ends_at=None,
+                current_period_start=start_dt,
+                current_period_end=end_dt,
+                cancel_at_period_end=False,
+                cancelled_at=None,
+            )
+            db.add(resulting_sub)
+
+    elif action_type == "change_plan":
+        if not curr_sub:
+            raise ValidationError("Cannot perform mid-term plan change without an existing current subscription.")
+        if data.trial_ends_at is not None:
+            raise ValidationError("trial_ends_at cannot be updated during mid-term plan change.")
+        if data.current_period_start is not None or data.current_period_end is not None:
+            raise ValidationError("Mid-term plan change preserves existing period dates; do not supply new start or end dates.")
+
+        plan_identifier = data.plan_code or data.plan_name
+        if not plan_identifier:
+            raise ValidationError("plan_code or plan_name is required for plan change.")
+        target_plan = resolve_plan(db, plan_identifier)
+
+        curr_sub.is_current = False
+        resulting_sub = OutletSubscription(
+            outlet_id=outlet.id,
+            business_id=outlet.business_id,
+            plan_id=target_plan.id,
+            status=curr_sub.status,
+            is_current=True,
+            trial_ends_at=ensure_utc(curr_sub.trial_ends_at),
+            current_period_start=ensure_utc(curr_sub.current_period_start),
+            current_period_end=ensure_utc(curr_sub.current_period_end),
+            cancel_at_period_end=curr_sub.cancel_at_period_end,
+            cancelled_at=ensure_utc(curr_sub.cancelled_at),
+        )
+        db.add(resulting_sub)
+
+    elif action_type == "change_plan_new_term":
+        if data.trial_ends_at is not None:
+            raise ValidationError("trial_ends_at cannot be updated during change_plan_new_term.")
+
+        plan_identifier = data.plan_code or data.plan_name
+        if not plan_identifier:
+            raise ValidationError("plan_code or plan_name is required for change_plan_new_term.")
+        target_plan = resolve_plan(db, plan_identifier)
+
+        if data.current_period_start is not None:
+            start_dt = ensure_utc(data.current_period_start)
+            if start_dt < now - timedelta(days=1):
+                reason_clean = (data.reason or "").strip()
+                if not reason_clean:
+                    raise ValidationError("A meaningful administrative reason is required when supplying a historical contractual start date.")
+                audit_metadata["historical_start_reason"] = reason_clean
+        else:
+            start_dt = now
+
+        if target_plan.code == "free_qr" and data.current_period_end is None:
+            end_dt = None
+        else:
+            expected_end = compute_annual_period_end(start_dt)
+            if data.current_period_end is not None:
+                end_dt = ensure_utc(data.current_period_end)
+                if end_dt != expected_end:
+                    raise ValidationError(
+                        f"current_period_end must be exactly one calendar year after current_period_start ({expected_end.isoformat()}). Got {end_dt.isoformat()}."
+                    )
+            else:
+                end_dt = expected_end
+
+            if end_dt <= now:
+                raise ValidationError("current_period_end must be strictly in the future.")
+
+        if curr_sub:
+            curr_sub.is_current = False
+
+        resulting_sub = OutletSubscription(
+            outlet_id=outlet.id,
+            business_id=outlet.business_id,
+            plan_id=target_plan.id,
+            status="active",
+            is_current=True,
+            trial_ends_at=None,
+            current_period_start=start_dt,
+            current_period_end=end_dt,
+            cancel_at_period_end=False,
+            cancelled_at=None,
+        )
+        db.add(resulting_sub)
+
+    elif action_type == "extend_trial":
+        if data.plan_code or data.plan_name:
+            raise ValidationError("Plan cannot be changed via extend_trial. Use activate or change_plan.")
+        if data.current_period_start is not None or data.current_period_end is not None:
+            raise ValidationError("Period dates are not applicable to trial extension.")
+        if not data.trial_ends_at:
+            raise ValidationError("trial_ends_at is required to extend trial.")
+
+        trial_ends = ensure_utc(data.trial_ends_at)
+        if trial_ends <= now:
+            raise ValidationError("trial_ends_at must be strictly in the future.")
+
+        if not curr_sub:
+            raise ValidationError("Cannot extend trial without an existing subscription record.")
+
+        curr_sub.trial_ends_at = trial_ends
+        curr_sub.status = "trial"
+        resulting_sub = curr_sub
+
+    elif action_type == "schedule_cancellation":
+        if data.plan_code or data.plan_name:
+            raise ValidationError("Plan cannot be changed when scheduling cancellation.")
+        if data.trial_ends_at is not None or data.current_period_start is not None or data.current_period_end is not None:
+            raise ValidationError("Dates cannot be updated when scheduling cancellation.")
+
+        if not curr_sub or curr_sub.status not in ("active", "past_due"):
+            raise ValidationError("Can only schedule cancellation for an active or past_due subscription.")
+        curr_end_utc = ensure_utc(curr_sub.current_period_end)
+        if not curr_end_utc or curr_end_utc <= now:
+            raise ValidationError("Cannot schedule cancellation for an expired subscription.")
+
+        curr_sub.cancel_at_period_end = True
+        curr_sub.cancelled_at = now
+        resulting_sub = curr_sub
+
+    elif action_type == "revoke_scheduled_cancellation":
+        if data.plan_code or data.plan_name or data.trial_ends_at or data.current_period_start or data.current_period_end:
+            raise ValidationError("Fields other than reason cannot be updated when revoking scheduled cancellation.")
+
+        if not curr_sub or not curr_sub.cancel_at_period_end:
+            raise ValidationError("No scheduled cancellation found to revoke.")
+
+        curr_sub.cancel_at_period_end = False
+        curr_sub.cancelled_at = None
+        resulting_sub = curr_sub
+
+    elif action_type == "cancel_immediately":
+        if data.plan_code or data.plan_name or data.trial_ends_at or data.current_period_start or data.current_period_end:
+            raise ValidationError("Fields other than reason cannot be updated during immediate cancellation.")
+
+        reason_clean = (data.reason or "").strip()
+        if not reason_clean:
+            raise ValidationError("Reason is required for immediate cancellation.")
+
+        if not curr_sub:
+            raise ValidationError("No current subscription found to cancel.")
+
+        curr_sub.status = "cancelled"
+        curr_sub.cancelled_at = now
+        curr_sub.cancel_at_period_end = False
+        resulting_sub = curr_sub
+
+    elif action_type == "mark_past_due":
+        if data.plan_code or data.plan_name or data.trial_ends_at or data.current_period_start or data.current_period_end:
+            raise ValidationError("Fields cannot be updated with mark_past_due. For extensions use mark_past_due_with_extension.")
+
+        if not curr_sub:
+            raise ValidationError("No current subscription found.")
+
+        curr_sub.status = "past_due"
+        resulting_sub = curr_sub
+
+    elif action_type == "mark_past_due_with_extension":
+        if data.plan_code or data.plan_name or data.trial_ends_at or data.current_period_start:
+            raise ValidationError("Only current_period_end and reason can be provided for past-due recovery extension.")
+
+        if not data.current_period_end:
+            raise ValidationError("current_period_end is required for past-due recovery extension.")
+
+        ext_end = ensure_utc(data.current_period_end)
+        if ext_end <= now:
+            raise ValidationError("current_period_end extension must be strictly in the future.")
+
+        reason_clean = (data.reason or "").strip()
+        if not reason_clean:
+            raise ValidationError("Reason is required for past-due recovery extension.")
+
+        if not curr_sub:
+            raise ValidationError("No current subscription found.")
+
+        curr_sub.status = "past_due"
+        curr_sub.current_period_end = ext_end
+        audit_metadata["extension_reason"] = reason_clean
+        resulting_sub = curr_sub
+
+    else:
+        raise ValidationError(f"Unknown lifecycle action_type '{action_type}'.")
+
+    db.flush()
+
+    # Re-fetch the current subscription after changes
+    final_sub = db.query(OutletSubscription).options(
+        joinedload(OutletSubscription.plan)
+    ).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+
+    after_state = {
+        "status": final_sub.status if final_sub else None,
+        "plan_code": final_sub.plan.code if (final_sub and final_sub.plan) else None,
+        "plan_name": final_sub.plan.name if (final_sub and final_sub.plan) else None,
+        "trial_ends_at": final_sub.trial_ends_at.isoformat() if (final_sub and final_sub.trial_ends_at) else None,
+        "current_period_start": final_sub.current_period_start.isoformat() if (final_sub and final_sub.current_period_start) else None,
+        "current_period_end": final_sub.current_period_end.isoformat() if (final_sub and final_sub.current_period_end) else None,
+        "cancel_at_period_end": final_sub.cancel_at_period_end if final_sub else False,
+        "cancelled_at": final_sub.cancelled_at.isoformat() if (final_sub and final_sub.cancelled_at) else None,
+    }
+
+    try:
+        log_audit(
+            db=db,
+            business_id=outlet.business_id,
+            outlet_id=outlet.id,
+            actor_user_id=actor_user_id,
+            action=audit_action,
+            entity_type="outlet_subscription",
+            entity_id=final_sub.id if final_sub else None,
+            metadata_json={
+                "outcome": "success",
+                "action_type": action_type,
+                "before": before_state,
+                "after": after_state,
+                **audit_metadata
+            }
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    db.refresh(final_sub)
+    return final_sub

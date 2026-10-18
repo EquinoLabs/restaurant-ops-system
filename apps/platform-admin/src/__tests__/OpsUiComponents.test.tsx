@@ -12,6 +12,7 @@ import {
   Drawer,
   ConfirmDialog,
   FormField,
+  opsSelectClass,
   getFormFieldControlAriaProps,
   StateBlock,
   InlineStateBanner,
@@ -152,6 +153,33 @@ describe('DataTable', () => {
     headers.forEach((th) => {
       expect(th.getAttribute('scope')).toBe('col');
     });
+  });
+
+  it('supports explicit tabular numerals and single-line truncation on name-like columns with native title', () => {
+    const customCols = [
+      {
+        key: 'name',
+        header: 'Tenant Name',
+        truncateName: true,
+        getTitle: (r: Row) => `Full Tenant Name: ${r.name}`,
+        render: (r: Row) => r.name,
+      },
+      { key: 'created', header: 'Created', tabular: true, render: () => '14 Oct 2026' },
+      { key: 'notes', header: 'Notes', render: () => 'Regular wrapped description text' },
+    ];
+    render(<DataTable columns={customCols} rows={rows} rowKey={(r) => r.id} />);
+    const nameCell = screen.getByText('Acme').closest('td');
+    expect(nameCell?.className).toContain('truncate');
+    expect(nameCell?.className).toContain('max-w-[240px]');
+    expect(nameCell?.getAttribute('title')).toBe('Full Tenant Name: Acme');
+
+    const dateCell = screen.getAllByText('14 Oct 2026')[0].closest('td');
+    expect(dateCell?.className).toContain('tabular-nums');
+    expect(dateCell?.getAttribute('title')).toBeNull();
+
+    const notesCell = screen.getAllByText('Regular wrapped description text')[0].closest('td');
+    expect(notesCell?.className).not.toContain('truncate');
+    expect(notesCell?.getAttribute('title')).toBeNull();
   });
 });
 
@@ -302,6 +330,8 @@ describe('Drawer', () => {
     );
     const dialog = screen.getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
+    expect(dialog.className).toContain('animate-ops-drawer-enter');
+    expect(dialog.className).toContain('motion-reduce:animate-none');
     expect(screen.getByText('Edit subscription')).toBeTruthy();
     expect(screen.getByText('Acme')).toBeTruthy();
     expect(screen.getByText('Drawer body')).toBeTruthy();
@@ -477,11 +507,13 @@ describe('ConfirmDialog', () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 
-  it('associates accessible name with visible heading', () => {
+  it('associates accessible name with visible heading and applies enter animation classes', () => {
     render(<ConfirmDialog {...baseProps} />);
     const dialog = screen.getByRole('alertdialog');
     const labelledBy = dialog.getAttribute('aria-labelledby');
     expect(labelledBy).toBeTruthy();
+    expect(dialog.className).toContain('animate-ops-dialog-enter');
+    expect(dialog.className).toContain('motion-reduce:animate-none');
     const heading = document.getElementById(labelledBy as string);
     expect(heading?.textContent).toBe('Suspend operator');
   });
@@ -589,6 +621,26 @@ describe('FormField', () => {
     const invalid = getFormFieldControlAriaProps('biz-name', { error: 'Required' });
     expect(invalid['aria-describedby']).toBe('biz-name-error');
     expect(invalid['aria-invalid']).toBe(true);
+  });
+
+  it('renders label with 12px weight 500 (font-medium) text-ops-text-secondary', () => {
+    render(
+      <FormField id="test-field" label="Field label">
+        <input id="test-field" />
+      </FormField>
+    );
+    const label = screen.getByText('Field label');
+    expect(label.className).toContain('text-xs');
+    expect(label.className).toContain('font-medium');
+    expect(label.className).toContain('text-ops-text-secondary');
+  });
+
+  it('provides opsSelectClass with custom SVG chevron and 32px height', () => {
+    expect(opsSelectClass).toContain('h-8');
+    expect(opsSelectClass).toContain('rounded-md');
+    expect(opsSelectClass).toContain('border-ops-border');
+    expect(opsSelectClass).toContain('appearance-none');
+    expect(opsSelectClass).toContain('background-image');
   });
 });
 

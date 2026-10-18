@@ -56,7 +56,7 @@ export const ServerErrorPage: React.FC<ServerErrorPageProps> = ({ error }) => {
               <summary className="cursor-pointer select-none py-1 text-[12px] font-medium text-ops-text-secondary transition-colors hover:text-ops-text-primary">
                 Technical details
               </summary>
-              <div className="mt-2.5 whitespace-pre-wrap break-words rounded-md bg-ops-canvas p-3 font-mono text-[12px] leading-[18px] text-ops-text-primary">
+              <div className="mt-2.5 rounded-md border border-ops-border bg-ops-canvas p-4 font-mono text-xs leading-5 text-ops-text-primary whitespace-pre-wrap break-all">
                 {message}
               </div>
             </details>

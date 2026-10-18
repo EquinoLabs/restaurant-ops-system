@@ -53,6 +53,25 @@ export default {
         'ops-l1': '0px 2px 4px rgba(31, 41, 51, 0.04), 0px 4px 8px rgba(31, 41, 51, 0.06)',
         'ops-l2': '0px 8px 16px rgba(31, 41, 51, 0.08), 0px 16px 24px rgba(31, 41, 51, 0.06)',
       },
+      keyframes: {
+        'ops-drawer-enter': {
+          '0%': { transform: 'translateX(100%)' },
+          '100%': { transform: 'translateX(0)' },
+        },
+        'ops-dialog-enter': {
+          '0%': { transform: 'scale(0.95)', opacity: '0' },
+          '100%': { transform: 'scale(1)', opacity: '1' },
+        },
+        'ops-fade-in': {
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
+        },
+      },
+      animation: {
+        'ops-drawer-enter': 'ops-drawer-enter 200ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'ops-dialog-enter': 'ops-dialog-enter 150ms cubic-bezier(0.16, 1, 0.3, 1)',
+        'ops-fade-in': 'ops-fade-in 150ms cubic-bezier(0.16, 1, 0.3, 1)',
+      },
     },
   },
   plugins: [],

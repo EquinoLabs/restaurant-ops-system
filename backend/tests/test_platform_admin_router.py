@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.main import app
-from app.modules.staff.models import User, OutletMembership
+from app.modules.staff.models import User, OutletMembership, BusinessMembership
 from app.modules.businesses.models import Business
 from app.modules.outlets.models import Outlet
 from app.db.base import utc_now
@@ -604,3 +604,119 @@ def test_assign_owner_business_scoped_validation(client: TestClient, db_session:
 
 
 
+
+
+def test_add_outlet_with_manager_validation(client: TestClient, db_session: Session):
+    # Admin user
+    admin_user = db_session.query(User).filter(User.email == 'staff@test.com').first()
+    admin_user.is_platform_admin = True
+    admin_user.platform_role = 'admin'
+    db_session.commit()
+    admin_login = client.post('/api/v1/auth/login', json={'email': 'staff@test.com', 'password': 'password123'})
+    admin_headers = {'Authorization': f'Bearer {admin_login.json()["access_token"]}'}
+
+    # Create business
+    biz = Business(name='Manager Biz', status='active')
+    db_session.add(biz)
+    db_session.flush()
+
+    # User without business membership
+    user_no_mem = User(email='no-mem@test.com', password_hash=hash_password('password123'), display_name='No Mem User', status='active')
+    db_session.add(user_no_mem)
+    db_session.flush()
+
+    unique_slug = f'mgr-test-outlet-{uuid.uuid4().hex[:6]}'
+
+    unique_slug_ineligible = f'mgr-test-ineligible-{uuid.uuid4().hex[:6]}'
+    unique_slug_eligible = f'mgr-test-eligible-{uuid.uuid4().hex[:6]}'
+
+    # Create outlet with ineligible manager -> 422
+    resp = client.post(f'/api/v1/platform/businesses/{biz.id}/outlets', headers=admin_headers, json={
+        'name': 'Outlet Ineligible',
+        'public_slug': unique_slug_ineligible,
+        'plan_code': 'trial',
+        'manager': {'user_id': str(user_no_mem.id)}
+    })
+    assert resp.status_code == 422
+    assert 'is not a manager of this business' in resp.json()['detail']['error']['message']
+
+    # Assign manager role
+    biz_mem = BusinessMembership(business_id=biz.id, user_id=user_no_mem.id, role='manager')
+    db_session.add(biz_mem)
+    db_session.commit()
+
+    # Create outlet with eligible manager -> 200
+    resp = client.post(f'/api/v1/platform/businesses/{biz.id}/outlets', headers=admin_headers, json={
+        'name': 'Outlet Eligible',
+        'public_slug': unique_slug_eligible,
+        'plan_code': 'trial',
+        'manager': {'user_id': str(user_no_mem.id)}
+    })
+    assert resp.status_code == 200
+
+
+def test_add_outlet_audit_metadata_contains_manager_user_id(client: TestClient, db_session: Session):
+    admin_user = db_session.query(User).filter(User.email == 'staff@test.com').first()
+    admin_user.is_platform_admin = True
+    admin_user.platform_role = 'admin'
+    db_session.commit()
+    admin_login = client.post('/api/v1/auth/login', json={'email': 'staff@test.com', 'password': 'password123'})
+    admin_headers = {'Authorization': f'Bearer {admin_login.json()["access_token"]}'}
+
+    biz = Business(name='Audit Biz', status='active')
+    db_session.add(biz)
+    db_session.flush()
+
+    mgr = User(email='audit-mgr@test.com', password_hash=hash_password('password123'), display_name='Audit Mgr', status='active')
+    db_session.add(mgr)
+    db_session.flush()
+    db_session.add(BusinessMembership(business_id=biz.id, user_id=mgr.id, role='manager'))
+    db_session.commit()
+
+    slug = f'audit-outlet-{uuid.uuid4().hex[:6]}'
+    resp = client.post(f'/api/v1/platform/businesses/{biz.id}/outlets', headers=admin_headers, json={
+        'name': 'Audit Outlet',
+        'public_slug': slug,
+        'plan_code': 'trial',
+        'manager': {'user_id': str(mgr.id)}
+    })
+    assert resp.status_code == 200
+    outlet_id = resp.json()['id']
+
+    audit_resp = client.get('/api/v1/platform/audit-logs', headers=admin_headers, params={'entity_id': str(outlet_id)})
+    assert audit_resp.status_code == 200
+    items = audit_resp.json()['items']
+    create_log = next((i for i in items if i['action'] == 'platform.outlet.create'), None)
+    assert create_log is not None
+    meta = create_log['metadata_json']
+    assert meta['manager_user_id'] == str(mgr.id)
+    assert 'password' not in str(meta)
+
+
+def test_add_outlet_without_manager_audit_metadata(client: TestClient, db_session: Session):
+    admin_user = db_session.query(User).filter(User.email == 'staff@test.com').first()
+    admin_user.is_platform_admin = True
+    admin_user.platform_role = 'admin'
+    db_session.commit()
+    admin_login = client.post('/api/v1/auth/login', json={'email': 'staff@test.com', 'password': 'password123'})
+    admin_headers = {'Authorization': f'Bearer {admin_login.json()["access_token"]}'}
+
+    biz = Business(name='NoMgr Biz', status='active')
+    db_session.add(biz)
+    db_session.flush()
+
+    slug = f'no-mgr-outlet-{uuid.uuid4().hex[:6]}'
+    resp = client.post(f'/api/v1/platform/businesses/{biz.id}/outlets', headers=admin_headers, json={
+        'name': 'No Mgr Outlet',
+        'public_slug': slug,
+        'plan_code': 'trial'
+    })
+    assert resp.status_code == 200
+    outlet_id = resp.json()['id']
+
+    audit_resp = client.get('/api/v1/platform/audit-logs', headers=admin_headers, params={'entity_id': str(outlet_id)})
+    assert audit_resp.status_code == 200
+    items = audit_resp.json()['items']
+    create_log = next((i for i in items if i['action'] == 'platform.outlet.create'), None)
+    assert create_log is not None
+    assert create_log['metadata_json']['manager_user_id'] is None

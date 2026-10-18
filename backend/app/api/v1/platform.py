@@ -36,6 +36,8 @@ from app.modules.subscriptions.schemas import (
     PlatformOverrideInspectionItem,
     PlanRead,
     BusinessSubscriptionRead,
+    OutletSubscriptionRead,
+    PlatformOutletSubscriptionUpdate,
 )
 from app.modules.subscriptions.service import EntitlementService
 from app.modules.audit.schemas import PlatformAuditLogListOut, PlatformAuditLogItemOut
@@ -116,6 +118,11 @@ IMPLEMENTED_PLATFORM_ROUTE_POLICIES = {
         "service_level_auth": None,
     },
     ("PATCH", "/api/v1/platform/businesses/{business_id}/subscription"): {
+        "router": "commercial_router",
+        "allowed_roles": {"owner", "admin"},
+        "service_level_auth": None,
+    },
+    ("PATCH", "/api/v1/platform/outlets/{outlet_id}/subscription"): {
         "router": "commercial_router",
         "allowed_roles": {"owner", "admin"},
         "service_level_auth": None,
@@ -298,13 +305,13 @@ def list_operators(db: Session = Depends(get_db)):
     return [PlatformAdminUserOut.model_validate(u) for u in users]
 
 
-@commercial_router.get("/businesses/{business_id}/subscriptions", response_model=List[BusinessSubscriptionRead])
+@commercial_router.get("/businesses/{business_id}/subscriptions", response_model=List[OutletSubscriptionRead])
 def list_business_subscriptions(
     business_id: uuid.UUID,
     db: Session = Depends(get_db)
 ):
     subs = platform_service.list_business_subscriptions(db, business_id=business_id)
-    return [BusinessSubscriptionRead.model_validate(s) for s in subs]
+    return [OutletSubscriptionRead.model_validate(s) for s in subs]
 
 
 @commercial_router.patch("/businesses/{business_id}/subscription", response_model=PlatformBusinessOut)
@@ -318,6 +325,19 @@ def update_subscription(
         db, business_id=business_id, data=data, actor_user_id=current_user.id
     )
     return PlatformBusinessOut.model_validate(biz)
+
+
+@commercial_router.patch("/outlets/{outlet_id}/subscription", response_model=OutletSubscriptionRead)
+def update_outlet_subscription(
+    outlet_id: uuid.UUID,
+    data: PlatformOutletSubscriptionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    sub = platform_service.update_outlet_subscription(
+        db, outlet_id=outlet_id, data=data, actor_user_id=current_user.id
+    )
+    return OutletSubscriptionRead.model_validate(sub)
 
 
 @commercial_router.post("/businesses/{business_id}/assign-owner", response_model=BusinessMembershipOut)

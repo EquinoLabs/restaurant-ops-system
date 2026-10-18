@@ -143,13 +143,7 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
               />
             </FormField>
 
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="add-operator-password"
-                className="text-xs font-semibold text-ops-text-secondary"
-              >
-                Initial Password<span className="ml-0.5 text-ops-error">*</span>
-              </label>
+            <FormField id="add-operator-password" label="Initial Password" required>
               <div className="relative">
                 <input
                   id="add-operator-password"
@@ -174,7 +168,7 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
                   )}
                 </button>
               </div>
-            </div>
+            </FormField>
 
             <div className="flex items-start gap-2 rounded-md border border-ops-border bg-ops-canvas p-3">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-ops-text-secondary" aria-hidden="true" />

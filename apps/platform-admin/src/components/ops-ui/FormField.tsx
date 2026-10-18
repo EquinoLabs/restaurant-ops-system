@@ -81,7 +81,7 @@ export const FormField: React.FC<FormFieldProps> = ({
 
   return (
     <div className={`flex flex-col gap-1.5 ${className}`}>
-      <label htmlFor={controlAria.id} className="text-xs font-semibold text-ops-text-secondary">
+      <label htmlFor={controlAria.id} className="text-xs font-medium text-ops-text-secondary">
         {label}
         {required && <span className="ml-0.5 text-ops-error">*</span>}
       </label>
@@ -102,3 +102,6 @@ export const FormField: React.FC<FormFieldProps> = ({
 
 export const opsInputClass =
   'h-8 w-full rounded-md border border-ops-border bg-white px-2.5 text-[13px] text-ops-text-primary placeholder:text-ops-text-disabled focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus disabled:opacity-50';
+
+export const opsSelectClass =
+  'h-8 w-full appearance-none rounded-md border border-ops-border bg-white pl-2.5 pr-8 text-[13px] text-ops-text-primary bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] bg-no-repeat focus:border-ops-accent focus:outline-none focus:ring-2 focus:ring-ops-accent-focus disabled:opacity-50 [background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2216%22%20height%3D%2216%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23616E7C%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpath%20d%3D%22m6%209%206%206%206-6%22%2F%3E%3C%2Fsvg%3E")] [background-position:right_8px_center] [background-size:16px_16px]';

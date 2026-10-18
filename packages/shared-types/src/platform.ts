@@ -19,6 +19,10 @@ export interface PlatformBusiness {
   id: string;
   name: string;
   status: string;
+  // Legacy fields kept for compatibility while outlet-scoped subscriptions roll out.
+  // Subscriptions are per-outlet under Stage 3; these values reflect whichever
+  // outlet the legacy endpoint chose to surface and must not be used for
+  // commercial decisions.
   subscription_status?: string;
   plan_name?: string | null;
   max_outlets?: number | null;
@@ -33,7 +37,6 @@ export interface PlatformBusinessCreatePayload {
   owner_email: string;
   owner_password: string;
   owner_display_name: string;
-  public_slug: string;
   currency?: string;
   timezone?: string;
   address?: string;
@@ -63,8 +66,9 @@ export interface PlatformPlan {
   updated_at: string;
 }
 
-export interface BusinessSubscriptionItem {
+export interface PlatformOutletSubscriptionItem {
   id: string;
+  outlet_id: string;
   business_id: string;
   plan_id: string;
   status: string;
@@ -78,6 +82,8 @@ export interface BusinessSubscriptionItem {
   updated_at: string | null;
   plan: PlatformPlan | null;
 }
+
+export type BusinessSubscriptionItem = PlatformOutletSubscriptionItem;
 
 export interface PlatformSubscriptionUpdatePayload {
   action_type?: string;
@@ -103,6 +109,10 @@ export interface PlatformOutletCreatePayload {
   manager?: PlatformOutletManagerPayload | null;
 }
 
+/**
+ * Owner/target-user selection for assign-owner. Use either user_id (existing user)
+ * or email+password+display_name (new account). Mixing modes is rejected server-side.
+ */
 export interface PlatformAssignOwnerPayload {
   user_id?: string;
   email?: string;

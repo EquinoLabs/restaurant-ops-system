@@ -10,6 +10,7 @@ from app.db.base import utc_now
 from app.modules.staff.models import User
 from app.modules.businesses.models import Business
 from app.modules.outlets.models import Outlet
+from app.core.security import hash_password
 from app.modules.subscriptions.models import (
     Plan, Feature, PlanFeature, BusinessSubscription
 )
@@ -739,7 +740,7 @@ def test_canonical_plans_and_history_endpoints(client: TestClient, db_session: S
     assert "growth_pos" in codes
     assert "pro_kds" in codes
 
-    # 2. GET /platform/businesses/{id}/subscriptions
+    # 2. GET /platform/businesses/{id}/subscriptions (canonical outlet subscriptions)
     res_create = client.post(
         "/api/v1/platform/businesses",
         headers=headers,
@@ -754,29 +755,21 @@ def test_canonical_plans_and_history_endpoints(client: TestClient, db_session: S
     )
     biz_id = res_create.json()["id"]
 
-    # Seed a trial BusinessSubscription (Phase 3: no longer auto-created on business creation)
-    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
-    trial_sub = BusinessSubscription(
-        id=uuid.uuid4(), business_id=uuid.UUID(biz_id), plan_id=starter.id,
-        status="trial", is_current=True, trial_ends_at=utc_now() + timedelta(days=30)
-    )
-    db_session.add(trial_sub)
-    db_session.commit()
-
-    client.patch(
-        f"/api/v1/platform/businesses/{biz_id}/subscription",
+    out_res = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
         headers=headers,
-        json={"action_type": "activate", "plan_code": "growth_pos"}
+        json={"name": "History Outlet", "public_slug": f"hist-out-{uuid.uuid4().hex[:6]}", "plan_code": "starter_pos"}
     )
+    assert out_res.status_code == 200
+    outlet_id = out_res.json()["id"]
 
     res_history = client.get(f"/api/v1/platform/businesses/{biz_id}/subscriptions", headers=headers)
     assert res_history.status_code == 200
     history = res_history.json()
-    assert len(history) == 2
+    assert len(history) == 1
+    assert history[0]["outlet_id"] == outlet_id
     assert history[0]["is_current"] is True
     assert history[0]["status"] == "active"
-    assert history[1]["is_current"] is False
-    assert history[1]["status"] == "trial"
 
 
 def test_plan_resolution_rejects_unknown_and_inactive(client: TestClient, db_session: Session):
@@ -933,3 +926,912 @@ def test_fail_closed_active_sub_missing_period_end(db_session: Session):
     assert res.authorized is False
     assert res.reason == "SUBSCRIPTION_EXPIRED"
     assert res.resolved_status == "expired"
+
+
+def test_list_business_subscriptions_canonical_outlet_subscriptions(client: TestClient, db_session: Session):
+    """
+    Verify GET /api/v1/platform/businesses/{business_id}/subscriptions returns canonical
+    OutletSubscription records with outlet_id, nested plan details, null date handling,
+    and business isolation.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    headers = get_admin_headers(client, db_session)
+
+    # 1. Setup Business A with two outlets
+    biz_a = Business(id=uuid.uuid4(), name="Outlet Sub Cafe A", status="active")
+    biz_b = Business(id=uuid.uuid4(), name="Outlet Sub Cafe B", status="active")
+    db_session.add_all([biz_a, biz_b])
+
+    out_a1 = Outlet(id=uuid.uuid4(), business_id=biz_a.id, name="Branch North", public_slug=f"north-{uuid.uuid4().hex[:6]}")
+    out_a2 = Outlet(id=uuid.uuid4(), business_id=biz_a.id, name="Branch South", public_slug=f"south-{uuid.uuid4().hex[:6]}")
+    out_b = Outlet(id=uuid.uuid4(), business_id=biz_b.id, name="Branch East", public_slug=f"east-{uuid.uuid4().hex[:6]}")
+    db_session.add_all([out_a1, out_a2, out_b])
+
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    growth = db_session.scalar(select(Plan).where(Plan.code == "growth_pos"))
+
+    # Seed canonical OutletSubscription records
+    now = utc_now()
+    sub_a1 = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=out_a1.id,
+        business_id=biz_a.id,
+        plan_id=starter.id,
+        status="trial",
+        is_current=True,
+        trial_ends_at=now + timedelta(days=30),
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+    )
+    sub_a2 = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=out_a2.id,
+        business_id=biz_a.id,
+        plan_id=growth.id,
+        status="active",
+        is_current=True,
+        trial_ends_at=None,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=365),
+        cancel_at_period_end=False,
+    )
+    sub_b = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=out_b.id,
+        business_id=biz_b.id,
+        plan_id=starter.id,
+        status="active",
+        is_current=True,
+        trial_ends_at=None,
+        current_period_start=now,
+        current_period_end=now + timedelta(days=365),
+        cancel_at_period_end=False,
+    )
+    db_session.add_all([sub_a1, sub_a2, sub_b])
+    db_session.commit()
+
+    # Query Business A subscriptions
+    res = client.get(f"/api/v1/platform/businesses/{biz_a.id}/subscriptions", headers=headers)
+    assert res.status_code == 200
+    subs_a = res.json()
+    assert len(subs_a) == 2
+
+    # Verify fields: outlet_id, plan nested object with code and name, dates
+    sub_dict_by_outlet = {s["outlet_id"]: s for s in subs_a}
+    assert str(out_a1.id) in sub_dict_by_outlet
+    assert str(out_a2.id) in sub_dict_by_outlet
+    assert str(out_b.id) not in sub_dict_by_outlet  # Business isolation!
+
+    item_a1 = sub_dict_by_outlet[str(out_a1.id)]
+    assert item_a1["status"] == "trial"
+    assert item_a1["is_current"] is True
+    assert item_a1["plan"]["code"] == "starter_pos"
+    assert item_a1["plan"]["name"] is not None
+    assert item_a1["trial_ends_at"] is not None
+    assert item_a1["current_period_end"] is None
+
+    item_a2 = sub_dict_by_outlet[str(out_a2.id)]
+    assert item_a2["status"] == "active"
+    assert item_a2["is_current"] is True
+    assert item_a2["plan"]["code"] == "growth_pos"
+    assert item_a2["current_period_end"] is not None
+
+    # Query Business B subscriptions
+    res_b = client.get(f"/api/v1/platform/businesses/{biz_b.id}/subscriptions", headers=headers)
+    assert res_b.status_code == 200
+    subs_b = res_b.json()
+    assert len(subs_b) == 1
+    assert subs_b[0]["outlet_id"] == str(out_b.id)
+
+
+def test_list_business_subscriptions_legacy_records_isolated(client: TestClient, db_session: Session):
+    """
+    Verify GET /api/v1/platform/businesses/{id}/subscriptions returns only canonical
+    OutletSubscription records (empty list when only legacy BusinessSubscription exists),
+    while preserving the legacy BusinessSubscription records intact in the database.
+    """
+    headers = get_admin_headers(client, db_session)
+
+    biz_legacy = Business(id=uuid.uuid4(), name="Legacy Sub Cafe", status="active")
+    db_session.add(biz_legacy)
+
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    legacy_sub = BusinessSubscription(
+        id=uuid.uuid4(),
+        business_id=biz_legacy.id,
+        plan_id=starter.id,
+        status="active",
+        is_current=True,
+        trial_ends_at=None,
+        current_period_start=utc_now(),
+        current_period_end=utc_now() + timedelta(days=365),
+    )
+    db_session.add(legacy_sub)
+    db_session.commit()
+
+    # The outlet-scoped endpoint returns only canonical outlet subscriptions ([] in this case)
+    res = client.get(f"/api/v1/platform/businesses/{biz_legacy.id}/subscriptions", headers=headers)
+    assert res.status_code == 200
+    subs = res.json()
+    assert subs == []
+
+    # Verify legacy BusinessSubscription remains completely intact in the database for reconciliation
+    db_record = db_session.query(BusinessSubscription).filter(
+        BusinessSubscription.business_id == biz_legacy.id
+    ).first()
+    assert db_record is not None
+    assert db_record.id == legacy_sub.id
+    assert db_record.status == "active"
+
+
+def test_list_business_subscriptions_preserves_historical_non_current_records(client: TestClient, db_session: Session):
+    """
+    Verify that OutletSubscription records with is_current=False are returned
+    with their actual stored status and non-null outlet_id, allowing callers
+    to distinguish historical records from unassigned outlets.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    headers = get_admin_headers(client, db_session)
+
+    biz = Business(id=uuid.uuid4(), name="History Sub Cafe", status="active")
+    db_session.add(biz)
+
+    out = Outlet(id=uuid.uuid4(), business_id=biz.id, name="History Branch", public_slug=f"hist-{uuid.uuid4().hex[:6]}")
+    db_session.add(out)
+
+    starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+
+    past_sub = OutletSubscription(
+        id=uuid.uuid4(),
+        outlet_id=out.id,
+        business_id=biz.id,
+        plan_id=starter.id,
+        status="trial",
+        is_current=False,  # Historical record
+        trial_ends_at=utc_now() - timedelta(days=5),
+        current_period_start=None,
+        current_period_end=None,
+        cancel_at_period_end=False,
+    )
+    db_session.add(past_sub)
+    db_session.commit()
+
+    res = client.get(f"/api/v1/platform/businesses/{biz.id}/subscriptions", headers=headers)
+    assert res.status_code == 200
+    subs = res.json()
+    assert len(subs) == 1
+    assert subs[0]["outlet_id"] == str(out.id)
+    assert subs[0]["is_current"] is False
+    assert subs[0]["status"] == "trial"
+
+
+def test_list_business_subscriptions_operator_forbidden(client: TestClient, db_session: Session):
+    """
+    Verify platform operator is forbidden (403) from accessing commercial subscription endpoints.
+    """
+    from app.core.security import hash_password
+
+    operator = db_session.query(User).filter(User.email == "sub_op@test.com").first()
+    if not operator:
+        operator = User(
+            id=uuid.uuid4(),
+            email="sub_op@test.com",
+            password_hash=hash_password("password123"),
+            display_name="Sub Operator",
+            status="active",
+            is_platform_admin=False,
+            platform_role="operator",
+        )
+        db_session.add(operator)
+        db_session.commit()
+
+    login_resp = client.post(
+        "/api/v1/auth/login",
+        json={"email": "sub_op@test.com", "password": "password123"},
+    )
+    op_token = login_resp.json()["access_token"]
+    op_headers = {"Authorization": f"Bearer {op_token}"}
+
+    res = client.get(f"/api/v1/platform/businesses/{uuid.uuid4()}/subscriptions", headers=op_headers)
+    assert res.status_code == 403
+
+
+def test_update_business_subscription_does_not_propagate_to_multiple_outlets(
+    client: TestClient, db_session: Session
+):
+    """
+    Regression test (Owner Decision 002):
+    A legacy business-level subscription mutation must NEVER overwrite canonical OutletSubscription records.
+    When a business has two outlets with distinct plans (e.g. starter_pos and pro_kds), updating the business
+    subscription must leave both outlet subscriptions completely unchanged:
+    - original plan preserved
+    - original status preserved
+    - lifecycle dates preserved
+    - is_current flag preserved
+    - row identity preserved
+    """
+    from datetime import datetime, timezone
+    from app.modules.subscriptions.models import OutletSubscription, Plan
+
+    headers = get_admin_headers(client, db_session)
+
+    # 1. Create a business
+    biz_data = {
+        "name": "Multi-Outlet Independence Biz",
+        "owner_email": f"owner_multi_{uuid.uuid4().hex[:6]}@test.com",
+        "owner_password": "Password123!",
+        "owner_display_name": "Multi Owner"
+    }
+    b_res = client.post("/api/v1/platform/businesses", headers=headers, json=biz_data)
+    assert b_res.status_code == 200
+    biz_id = uuid.UUID(b_res.json()["id"])
+
+    # 2. Add Outlet 1 on starter_pos
+    o1_res = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={
+            "name": "Outlet Alpha",
+            "public_slug": f"alpha-{uuid.uuid4().hex[:6]}",
+            "plan_code": "starter_pos"
+        }
+    )
+    assert o1_res.status_code == 200
+    o1_id = uuid.UUID(o1_res.json()["id"])
+
+    # 3. Add Outlet 2 on pro_kds
+    o2_res = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={
+            "name": "Outlet Beta",
+            "public_slug": f"beta-{uuid.uuid4().hex[:6]}",
+            "plan_code": "pro_kds"
+        }
+    )
+    assert o2_res.status_code == 200
+    o2_id = uuid.UUID(o2_res.json()["id"])
+
+    # Inspect initial OutletSubscription states
+    sub1_before = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o1_id,
+        OutletSubscription.is_current == True
+    ).first()
+    sub2_before = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o2_id,
+        OutletSubscription.is_current == True
+    ).first()
+
+    assert sub1_before is not None
+    assert sub2_before is not None
+    p_starter = db_session.scalar(select(Plan).where(Plan.code == "starter_pos"))
+    p_pro = db_session.scalar(select(Plan).where(Plan.code == "pro_kds"))
+    assert sub1_before.plan_id == p_starter.id
+    assert sub2_before.plan_id == p_pro.id
+
+    sub1_id_before = sub1_before.id
+    sub2_id_before = sub2_before.id
+    sub1_status_before = sub1_before.status
+    sub2_status_before = sub2_before.status
+    sub1_start_before = sub1_before.current_period_start
+    sub1_end_before = sub1_before.current_period_end
+    sub2_start_before = sub2_before.current_period_start
+    sub2_end_before = sub2_before.current_period_end
+
+    # 4. Perform legacy business-level subscription mutation (e.g. change_plan to enterprise)
+    patch_res = client.patch(
+        f"/api/v1/platform/businesses/{biz_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "activate",
+            "plan_code": "enterprise"
+        }
+    )
+    assert patch_res.status_code == 200
+
+    # 5. Verify that NEITHER outlet subscription was modified or overwritten
+    sub1_after = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o1_id,
+        OutletSubscription.is_current == True
+    ).first()
+    sub2_after = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o2_id,
+        OutletSubscription.is_current == True
+    ).first()
+
+    assert sub1_after is not None
+    assert sub2_after is not None
+
+    # Exact identity and field preservation
+    assert sub1_after.id == sub1_id_before
+    assert sub2_after.id == sub2_id_before
+    assert sub1_after.plan_id == p_starter.id, "Outlet 1 plan must remain starter_pos"
+    assert sub2_after.plan_id == p_pro.id, "Outlet 2 plan must remain pro_kds"
+    assert sub1_after.status == sub1_status_before
+    assert sub2_after.status == sub2_status_before
+    assert sub1_after.current_period_start == sub1_start_before
+    assert sub1_after.current_period_end == sub1_end_before
+    assert sub2_after.current_period_start == sub2_start_before
+    assert sub2_after.current_period_end == sub2_end_before
+    assert sub1_after.is_current is True
+    assert sub2_after.is_current is True
+
+
+# ==============================================================================
+# Outlet-Scoped Subscription Lifecycle Management Tests (Phase 3A)
+# ==============================================================================
+
+def _setup_test_business_and_outlet(client: TestClient, db_session: Session, initial_plan_code: str = "starter_pos"):
+    """Helper to provision a test business and outlet with an initial subscription."""
+    headers = get_admin_headers(client, db_session)
+    biz_resp = client.post(
+        "/api/v1/platform/businesses",
+        headers=headers,
+        json={
+            "name": f"Lifecycle Biz {uuid.uuid4().hex[:6]}",
+            "owner_email": f"lifecycle_{uuid.uuid4().hex[:6]}@example.com",
+            "owner_password": "Password123!",
+            "owner_display_name": "Lifecycle Owner",
+            "public_slug": f"lc-biz-{uuid.uuid4().hex[:6]}",
+        }
+    )
+    assert biz_resp.status_code == 200
+    biz_id = uuid.UUID(biz_resp.json()["id"])
+
+    outlet_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={
+            "name": "Lifecycle Main Outlet",
+            "public_slug": f"lc-main-{uuid.uuid4().hex[:6]}",
+            "plan_code": initial_plan_code
+        }
+    )
+    assert outlet_resp.status_code == 200
+    outlet_id = uuid.UUID(outlet_resp.json()["id"])
+
+    return biz_id, outlet_id, headers
+
+
+def test_outlet_subscription_authorization_and_validation(client: TestClient, db_session: Session):
+    """
+    Verifies that:
+    1. Unauthenticated requests are rejected with 401.
+    2. Non-admin users are rejected with 403.
+    3. Missing or unknown action_type is rejected with 422.
+    4. Mutually exclusive or forbidden fields per action are rejected with 422.
+    """
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session)
+
+    # 1. Unauthenticated -> 401
+    unauth_resp = client.patch(f"/api/v1/platform/outlets/{outlet_id}/subscription", json={"action_type": "activate"})
+    assert unauth_resp.status_code == 401
+
+    # 2. Regular non-admin user -> 403
+    regular_user = User(
+        email=f"regular_{uuid.uuid4().hex[:6]}@example.com",
+        password_hash=hash_password("password123"),
+        display_name="Regular Staff",
+        status="active",
+        is_platform_admin=False
+    )
+    db_session.add(regular_user)
+    db_session.commit()
+    login_resp = client.post("/api/v1/auth/login", json={"email": regular_user.email, "password": "password123"})
+    regular_headers = {"Authorization": f"Bearer {login_resp.json()['access_token']}"}
+
+    forbidden_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=regular_headers,
+        json={"action_type": "activate", "plan_code": "pro_kds"}
+    )
+    assert forbidden_resp.status_code == 403
+
+    # 3. Missing action_type -> 422
+    missing_action_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"plan_code": "pro_kds"}
+    )
+    assert missing_action_resp.status_code == 422
+
+    # 4. Unknown action_type -> 422
+    bad_action_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "invalid_action", "plan_code": "pro_kds"}
+    )
+    assert bad_action_resp.status_code == 422
+    assert "Unknown lifecycle action_type" in bad_action_resp.json()["detail"]["error"]["message"]
+
+
+def test_outlet_subscription_activate_action(client: TestClient, db_session: Session):
+    """
+    Verifies the activate action:
+    - Atomically unmarks old current row (is_current=False)
+    - Inserts a new current row with status=active and computed 1-year annual term
+    - Rejects irrelevant fields like trial_ends_at
+    - Mandates administrative reason if contractual start is backdated > 24 hours
+    - Writes platform audit log with outlet_id and metadata
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="trial")
+
+    # Initial state: outlet is in trial
+    initial_sub = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    assert initial_sub.status == "trial"
+
+    # Attempt to pass trial_ends_at during activation -> 422
+    bad_field_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "activate",
+            "plan_code": "pro_kds",
+            "trial_ends_at": (utc_now() + timedelta(days=10)).isoformat()
+        }
+    )
+    assert bad_field_resp.status_code == 422
+    assert "trial_ends_at cannot be updated during activation" in bad_field_resp.json()["detail"]["error"]["message"]
+
+    # Attempt backdated start without reason -> 422
+    backdated_start = (utc_now() - timedelta(days=10)).isoformat()
+    no_reason_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "activate",
+            "plan_code": "pro_kds",
+            "current_period_start": backdated_start
+        }
+    )
+    assert no_reason_resp.status_code == 422
+    assert "administrative reason is required" in no_reason_resp.json()["detail"]["error"]["message"]
+
+    # Successful activation with valid plan and backdated start + reason
+    start_dt = utc_now() - timedelta(days=5)
+    expected_end = compute_annual_period_end(start_dt)
+    resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "activate",
+            "plan_code": "pro_kds",
+            "current_period_start": start_dt.isoformat(),
+            "reason": "Contract signed on 5 days ago"
+        }
+    )
+    assert resp.status_code == 200
+    res_data = resp.json()
+    assert res_data["outlet_id"] == str(outlet_id)
+    assert res_data["business_id"] == str(biz_id)
+    assert res_data["status"] == "active"
+    assert res_data["is_current"] is True
+    assert res_data["plan"]["code"] == "pro_kds"
+    assert res_data["current_period_end"] is not None
+    assert datetime.fromisoformat(res_data["current_period_end"].replace("Z", "+00:00")).year == expected_end.year
+    assert datetime.fromisoformat(res_data["current_period_end"].replace("Z", "+00:00")).month == expected_end.month
+    assert datetime.fromisoformat(res_data["current_period_end"].replace("Z", "+00:00")).day == expected_end.day
+
+    # Verify DB state: old sub is_current=False, exactly one row is_current=True
+    all_subs = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id
+    ).order_by(OutletSubscription.created_at.asc()).all()
+    assert len(all_subs) == 2
+    assert all_subs[0].id == initial_sub.id
+    assert all_subs[0].is_current is False
+    assert all_subs[1].id == uuid.UUID(res_data["id"])
+    assert all_subs[1].is_current is True
+
+    # Audit log verification
+    audit = db_session.query(AuditLog).filter(
+        AuditLog.entity_id == uuid.UUID(res_data["id"]),
+        AuditLog.action == "platform.outlet_subscription.activate"
+    ).first()
+    assert audit is not None
+    assert audit.outlet_id == outlet_id
+    assert audit.business_id == biz_id
+    assert audit.metadata_json["action_type"] == "activate"
+    assert audit.metadata_json["historical_start_reason"] == "Contract signed on 5 days ago"
+
+
+def test_outlet_subscription_renew_action_timely_and_late(client: TestClient, db_session: Session):
+    """
+    Verifies renew action:
+    1. Timely renewal: extends from existing contractual period_end by exactly 1 calendar year.
+    2. Late renewal: starts from now (or specified start) and extends 1 calendar year.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="starter_pos")
+
+    # Current subscription is active expiring in 60 days
+    curr_sub = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    orig_end = utc_now() + timedelta(days=60)
+    curr_sub.status = "active"
+    curr_sub.current_period_start = utc_now() - timedelta(days=305)
+    curr_sub.current_period_end = orig_end
+    db_session.commit()
+
+    # 1. Timely renewal (now < current_period_end)
+    expected_timely_end = compute_annual_period_end(orig_end)
+    renew_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "renew"}
+    )
+    assert renew_resp.status_code == 200
+    renew_data = renew_resp.json()
+    assert renew_data["status"] == "active"
+    assert renew_data["current_period_start"] is not None
+    assert renew_data["current_period_end"] is not None
+    assert datetime.fromisoformat(renew_data["current_period_end"].replace("Z", "+00:00")).year == expected_timely_end.year
+
+    # Old row un-flagged
+    db_session.refresh(curr_sub)
+    assert curr_sub.is_current is False
+
+    # 2. Simulate expired subscription and test Late Renewal
+    new_curr = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    new_curr.current_period_end = utc_now() - timedelta(days=5)  # expired
+    db_session.commit()
+
+    late_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "renew"}
+    )
+    assert late_resp.status_code == 200
+    late_data = late_resp.json()
+    assert late_data["status"] == "active"
+    # Started around now and ends 1 calendar year from now
+    db_session.refresh(new_curr)
+    assert new_curr.is_current is False
+
+
+def test_outlet_subscription_plan_changes(client: TestClient, db_session: Session):
+    """
+    Verifies:
+    1. change_plan (mid-term): preserves existing period start and end dates. Rejects new dates.
+    2. change_plan_new_term: starts a new 1-year annual term.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="starter_pos")
+
+    curr_sub = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    p_start = utc_now() - timedelta(days=40)
+    p_end = utc_now() + timedelta(days=325)
+    curr_sub.status = "active"
+    curr_sub.current_period_start = p_start
+    curr_sub.current_period_end = p_end
+    db_session.commit()
+
+    # Mid-term plan change attempting to supply dates -> 422
+    bad_dates_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "change_plan",
+            "plan_code": "growth_pos",
+            "current_period_start": utc_now().isoformat()
+        }
+    )
+    assert bad_dates_resp.status_code == 422
+    assert "Mid-term plan change preserves existing period dates" in bad_dates_resp.json()["detail"]["error"]["message"]
+
+    # Valid mid-term plan change
+    change_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "change_plan", "plan_code": "growth_pos"}
+    )
+    assert change_resp.status_code == 200
+    change_data = change_resp.json()
+    assert change_data["plan"]["code"] == "growth_pos"
+    assert datetime.fromisoformat(change_data["current_period_start"].replace("Z", "+00:00")).day == p_start.day
+    assert datetime.fromisoformat(change_data["current_period_end"].replace("Z", "+00:00")).day == p_end.day
+
+    # Plan change with new term -> resets start to now and end to 1 calendar year
+    new_term_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "change_plan_new_term", "plan_code": "enterprise"}
+    )
+    assert new_term_resp.status_code == 200
+    new_term_data = new_term_resp.json()
+    assert new_term_data["plan"]["code"] == "enterprise"
+    assert datetime.fromisoformat(new_term_data["current_period_start"].replace("Z", "+00:00")).day != p_start.day
+
+
+def test_outlet_subscription_in_place_actions(client: TestClient, db_session: Session):
+    """
+    Verifies in-place actions:
+    1. extend_trial (validates future trial_ends_at)
+    2. schedule_cancellation (sets cancel_at_period_end=True, cancelled_at=now)
+    3. revoke_scheduled_cancellation (clears cancel_at_period_end and cancelled_at)
+    4. cancel_immediately (requires reason, sets status=cancelled, clears cancel_at_period_end)
+    5. mark_past_due and mark_past_due_with_extension (requires extension date and reason)
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="trial")
+
+    # 1. extend_trial
+    # Past trial date -> 422
+    past_trial = (utc_now() - timedelta(days=1)).isoformat()
+    bad_trial_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "extend_trial", "trial_ends_at": past_trial}
+    )
+    assert bad_trial_resp.status_code == 422
+
+    # Future trial date -> 200
+    future_trial = utc_now() + timedelta(days=45)
+    good_trial_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "extend_trial", "trial_ends_at": future_trial.isoformat()}
+    )
+    assert good_trial_resp.status_code == 200
+    assert good_trial_resp.json()["status"] == "trial"
+    assert datetime.fromisoformat(good_trial_resp.json()["trial_ends_at"].replace("Z", "+00:00")).day == future_trial.day
+
+    # 2. Activate to test cancellations
+    client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "activate", "plan_code": "pro_kds"}
+    )
+
+    # 3. schedule_cancellation
+    sched_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "schedule_cancellation", "reason": "Customer requested cancellation at renewal"}
+    )
+    assert sched_resp.status_code == 200
+    assert sched_resp.json()["cancel_at_period_end"] is True
+    assert sched_resp.json()["cancelled_at"] is not None
+
+    # 4. revoke_scheduled_cancellation
+    revoke_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "revoke_scheduled_cancellation"}
+    )
+    assert revoke_resp.status_code == 200
+    assert revoke_resp.json()["cancel_at_period_end"] is False
+    assert revoke_resp.json()["cancelled_at"] is None
+
+    # 5. cancel_immediately without reason -> 422
+    no_reason_cancel = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "cancel_immediately"}
+    )
+    assert no_reason_cancel.status_code == 422
+
+    # cancel_immediately with reason -> 200
+    imm_cancel = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "cancel_immediately", "reason": "Non-payment and closure"}
+    )
+    assert imm_cancel.status_code == 200
+    assert imm_cancel.json()["status"] == "cancelled"
+    assert imm_cancel.json()["cancel_at_period_end"] is False
+
+    # 6. mark_past_due
+    # Reactivate first
+    client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "activate", "plan_code": "starter_pos"}
+    )
+    past_due_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "mark_past_due"}
+    )
+    assert past_due_resp.status_code == 200
+    assert past_due_resp.json()["status"] == "past_due"
+
+    # 7. mark_past_due_with_extension
+    ext_end = utc_now() + timedelta(days=15)
+    ext_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={
+            "action_type": "mark_past_due_with_extension",
+            "current_period_end": ext_end.isoformat(),
+            "reason": "Grace period granted until cheque clears"
+        }
+    )
+    assert ext_resp.status_code == 200
+    assert ext_resp.json()["status"] == "past_due"
+    assert datetime.fromisoformat(ext_resp.json()["current_period_end"].replace("Z", "+00:00")).day == ext_end.day
+
+
+def test_outlet_subscription_free_qr_non_expiring(client: TestClient, db_session: Session):
+    """
+    Verifies that free_qr plan allows null period end and is evaluated as non-expiring.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="trial")
+
+    free_qr_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "activate", "plan_code": "free_qr"}
+    )
+    assert free_qr_resp.status_code == 200
+    data = free_qr_resp.json()
+    assert data["plan"]["code"] == "free_qr"
+    assert data["current_period_end"] is None
+    assert data["status"] == "active"
+
+    sub = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    assert EntitlementService.evaluate_subscription_status(sub) == "active"
+
+
+def test_sibling_outlet_independence_and_business_column_isolation(client: TestClient, db_session: Session):
+    """
+    Verifies:
+    1. Mutating outlet 1's subscription does NOT affect sibling outlet 2.
+    2. Mutating outlet 1's subscription does NOT mutate business-level subscription columns.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, o1_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="starter_pos")
+
+    # Add second outlet to same business
+    o2_resp = client.post(
+        f"/api/v1/platform/businesses/{biz_id}/outlets",
+        headers=headers,
+        json={"name": "Sibling Outlet 2", "public_slug": f"sibling-2-{uuid.uuid4().hex[:6]}", "plan_code": "pro_kds"}
+    )
+    assert o2_resp.status_code == 200
+    o2_id = uuid.UUID(o2_resp.json()["id"])
+
+    # Seed initial business table state
+    biz = db_session.query(Business).filter(Business.id == biz_id).first()
+    biz.plan_name = "initial_biz_plan"
+    biz.subscription_status = "trial"
+    db_session.commit()
+
+    # Capture outlet 2 state before
+    o2_sub_before = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o2_id,
+        OutletSubscription.is_current == True
+    ).first()
+    o2_sub_id = o2_sub_before.id
+    o2_plan_id = o2_sub_before.plan_id
+    o2_status = o2_sub_before.status
+
+    # Mutate outlet 1: activate onto enterprise
+    o1_patch = client.patch(
+        f"/api/v1/platform/outlets/{o1_id}/subscription",
+        headers=headers,
+        json={"action_type": "activate", "plan_code": "enterprise"}
+    )
+    assert o1_patch.status_code == 200
+    assert o1_patch.json()["plan"]["code"] == "enterprise"
+
+    # 1. Outlet 2 is COMPLETELY unchanged
+    o2_sub_after = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == o2_id,
+        OutletSubscription.is_current == True
+    ).first()
+    assert o2_sub_after.id == o2_sub_id
+    assert o2_sub_after.plan_id == o2_plan_id
+    assert o2_sub_after.status == o2_status
+
+    # 2. Business-level columns were NOT modified
+    db_session.refresh(biz)
+    assert biz.plan_name == "initial_biz_plan"
+    assert biz.subscription_status == "trial"
+
+
+def test_expired_outlet_subscription_remains_authoritative_over_unexpired_legacy_business_sub(
+    client: TestClient, db_session: Session
+):
+    """
+    Verifies that when an outlet has a canonical OutletSubscription row that is expired,
+    entitlement resolution evaluates it as expired and NEVER falls back to an unexpired
+    legacy BusinessSubscription.
+    """
+    from app.modules.subscriptions.models import OutletSubscription, BusinessSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="starter_pos")
+
+    # Set up an unexpired legacy BusinessSubscription
+    p_pro = db_session.scalar(select(Plan).where(Plan.code == "pro_kds"))
+    legacy_biz_sub = BusinessSubscription(
+        business_id=biz_id,
+        plan_id=p_pro.id,
+        status="active",
+        is_current=True,
+        current_period_start=utc_now() - timedelta(days=10),
+        current_period_end=utc_now() + timedelta(days=350)
+    )
+    db_session.add(legacy_biz_sub)
+    db_session.commit()
+
+    # Cancel the outlet's subscription immediately
+    cancel_resp = client.patch(
+        f"/api/v1/platform/outlets/{outlet_id}/subscription",
+        headers=headers,
+        json={"action_type": "cancel_immediately", "reason": "Customer cancelled"}
+    )
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["status"] == "cancelled"
+
+    # Check entitlement for ordering.staff -> MUST be False / SUBSCRIPTION_CANCELLED
+    result = EntitlementService.check_entitlement(
+        db=db_session,
+        business_id=biz_id,
+        outlet_id=outlet_id,
+        feature_code="ordering.staff"
+    )
+    assert result.authorized is False
+    assert result.resolved_status == "cancelled"
+    assert result.reason == "SUBSCRIPTION_CANCELLED"
+
+
+def test_outlet_subscription_mutation_rollback_on_audit_failure(client: TestClient, db_session: Session):
+    """
+    Verifies transactional consistency: if audit log writing or commit fails,
+    all changes to OutletSubscription are rolled back.
+    """
+    from app.modules.subscriptions.models import OutletSubscription
+
+    biz_id, outlet_id, headers = _setup_test_business_and_outlet(client, db_session, initial_plan_code="starter_pos")
+
+    sub_before = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    before_plan_id = sub_before.plan_id
+    before_sub_id = sub_before.id
+
+    with patch("app.modules.businesses.platform_service.log_audit", side_effect=RuntimeError("Audit disk failure")):
+        with pytest.raises(RuntimeError):
+            client.patch(
+                f"/api/v1/platform/outlets/{outlet_id}/subscription",
+                headers=headers,
+                json={"action_type": "activate", "plan_code": "enterprise"}
+            )
+
+    # Ensure rollback occurred: no new row exists and sub_before remains is_current=True
+    db_session.expire_all()
+    sub_after = db_session.query(OutletSubscription).filter(
+        OutletSubscription.outlet_id == outlet_id,
+        OutletSubscription.is_current == True
+    ).first()
+    assert sub_after.id == before_sub_id
+    assert sub_after.plan_id == before_plan_id
+    assert sub_after.is_current is True
+
+

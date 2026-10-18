@@ -10,6 +10,7 @@ export { ConfirmDialog, type ConfirmDialogProps } from './ConfirmDialog';
 export {
   FormField,
   opsInputClass,
+  opsSelectClass,
   getFormFieldControlAriaProps,
   type FormFieldProps,
   type FormFieldControlAriaProps,
@@ -24,3 +25,4 @@ export {
   type InlineStateBannerProps,
   type SkeletonTableProps,
 } from './StateBlock';
+export { formatCurrency } from './formatCurrency';
