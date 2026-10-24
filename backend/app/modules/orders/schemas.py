@@ -37,6 +37,11 @@ class OrderStatusUpdate(BaseModel):
     status: str  # pending, confirmed, in_kitchen, served, completed, cancelled
 
 
+class OrderSettlementRequest(BaseModel):
+    payment_method: str = Field(..., description="Payment method: cash or upi")
+    confirm: bool = Field(True, description="Explicit confirmation that payment was collected")
+
+
 class OrderItemOut(BaseModel):
     id: uuid.UUID
     menu_item_id: Optional[uuid.UUID] = None
@@ -61,6 +66,11 @@ class OrderOut(BaseModel):
     order_type: str
     total_amount: Decimal
     notes: Optional[str] = None
+    payment_status: str = "unpaid"
+    payment_method: Optional[str] = None
+    settled_at: Optional[datetime] = None
+    settled_by_user_id: Optional[uuid.UUID] = None
+    settled_by_name: Optional[str] = None
     items: List[OrderItemOut] = []
     created_at: datetime
     updated_at: datetime

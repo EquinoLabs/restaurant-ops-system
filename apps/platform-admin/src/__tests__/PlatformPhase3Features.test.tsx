@@ -108,7 +108,7 @@ describe('Phase 3 Feature Tests: AddOperatorModal', () => {
       />
     );
 
-    expect(screen.getByText('Add Platform Operator')).toBeDefined();
+    expect(screen.getByText('Request Platform Operator')).toBeDefined();
 
     // Default mode is new account
     expect(screen.getByPlaceholderText('operator@roms.com')).toBeDefined();
@@ -122,16 +122,35 @@ describe('Phase 3 Feature Tests: AddOperatorModal', () => {
     expect(screen.getByPlaceholderText('operator@roms.com')).toBeDefined();
   });
 
-  it('calls createPlatformOperator API on submit with valid credentials', async () => {
-    const createSpy = vi.spyOn(apiClient, 'createPlatformOperator').mockResolvedValue({
-      id: 'op-123',
-      email: 'newop@platform.com',
-      display_name: 'New Operator',
-      status: 'active',
-      is_platform_admin: false,
-      platform_role: 'operator',
-      created_at: '2026-10-14T00:00:00Z',
-      updated_at: '2026-10-14T00:00:00Z',
+  it('calls submitPlatformApprovalRequest API on submit with valid credentials', async () => {
+    const submitSpy = vi.spyOn(apiClient, 'submitPlatformApprovalRequest').mockResolvedValue({
+      id: 'req-123',
+      business_id: null,
+      outlet_id: null,
+      requester_user_id: 'admin-1',
+      requester_email: 'admin@roms.com',
+      requester_display_name: 'Platform Admin',
+      approver_user_id: null,
+      approver_email: null,
+      approver_display_name: null,
+      request_type: 'operator_creation',
+      target_entity_type: 'operator',
+      target_entity_id: null,
+      status: 'pending',
+      execution_status: 'not_started',
+      justification: null,
+      expires_at: null,
+      decided_at: null,
+      created_at: '2026-10-25T00:00:00Z',
+      updated_at: '2026-10-25T00:00:00Z',
+      payload_snapshot: { email: 'newop@platform.com', display_name: 'New Operator' },
+      decision_reason: null,
+      execution_started_at: null,
+      execution_completed_at: null,
+      execution_error: null,
+      execution_details_json: null,
+      parent_request_id: null,
+      clarifications: [],
     });
 
     const handleSuccess = vi.fn();
@@ -149,26 +168,28 @@ describe('Phase 3 Feature Tests: AddOperatorModal', () => {
     fireEvent.change(screen.getByPlaceholderText('operator@roms.com'), {
       target: { value: 'newop@platform.com' },
     });
-    fireEvent.change(screen.getByPlaceholderText('Minimum 8 characters'), {
-      target: { value: 'password123' },
-    });
     fireEvent.change(screen.getByPlaceholderText('e.g. Operations Assistant'), {
       target: { value: 'New Operator' },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: /Confirm & Add Operator/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Submit for Approval/i }));
 
     await waitFor(() => {
-      expect(createSpy).toHaveBeenCalledWith(
-        {
-          email: 'newop@platform.com',
-          password: 'password123',
-          display_name: 'New Operator',
-        },
-        'test-token'
+      expect(submitSpy).toHaveBeenCalledWith(
+        'test-token',
+        expect.objectContaining({
+          request_type: 'operator_creation',
+          target_entity_type: 'operator',
+          target_entity_id: undefined,
+          payload: {
+            display_name: 'New Operator',
+            email: 'newop@platform.com',
+          },
+          justification: undefined,
+          idempotency_key: expect.stringMatching(/^op_sub_/),
+        })
       );
       expect(handleSuccess).toHaveBeenCalled();
-      expect(handleClose).toHaveBeenCalled();
     });
   });
 });

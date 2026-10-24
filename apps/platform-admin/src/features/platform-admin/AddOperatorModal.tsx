@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { PlatformOperatorCreatePayload } from '@roms/shared-types';
-import { createPlatformOperator } from '@roms/api-client';
-import { Eye, EyeOff, Info, Loader2 } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { submitPlatformApprovalRequest } from '@roms/api-client';
+import { Info, Loader2, CheckCircle2 } from 'lucide-react';
 import { Button, Drawer, FormField, opsInputClass } from '../../components/ops-ui';
 
 interface AddOperatorModalProps {
@@ -20,11 +19,15 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
   const [mode, setMode] = useState<'new' | 'existing'>('new');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [userId, setUserId] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  const [justification, setJustification] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Generate a stable idempotency key for this logical submission attempt.
+  // Reused across retries of the same attempt, but refreshed after successful completion.
+  const idempotencyKeyRef = useRef<string>(`op_sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`);
 
   if (!isOpen) return null;
 
@@ -33,26 +36,13 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
     if (!token) return;
 
     setError(null);
+    setSuccessMessage(null);
     setIsSubmitting(true);
 
     try {
-      const payload: PlatformOperatorCreatePayload =
-        mode === 'new'
-          ? {
-              display_name: displayName.trim(),
-              email: email.trim(),
-              password: password,
-            }
-          : {
-              user_id: userId.trim(),
-            };
-
       if (mode === 'new') {
-        if (!displayName.trim() || !email.trim() || !password) {
-          throw new Error('Please fill all required fields for new operator account.');
-        }
-        if (password.length < 8) {
-          throw new Error('Password must be at least 8 characters long.');
+        if (!displayName.trim() || !email.trim()) {
+          throw new Error('Please enter both full name and email address.');
         }
       } else {
         if (!userId.trim()) {
@@ -60,11 +50,37 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
         }
       }
 
-      await createPlatformOperator(payload, token);
+      const payloadRecord =
+        mode === 'new'
+          ? {
+              display_name: displayName.trim(),
+              email: email.trim(),
+            }
+          : {
+              target_user_id: userId.trim(),
+            };
+
+      await submitPlatformApprovalRequest(token, {
+        request_type: 'operator_creation',
+        target_entity_type: 'operator',
+        target_entity_id: mode === 'existing' ? userId.trim() : undefined,
+        payload: payloadRecord,
+        justification: justification.trim() || undefined,
+        idempotency_key: idempotencyKeyRef.current,
+      });
+
+      setSuccessMessage(
+        'Approval request submitted successfully. Once approved, the operator will be provisioned.'
+      );
+      // Reset idempotency key for any future submission
+      idempotencyKeyRef.current = `op_sub_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
       onSuccess();
-      onClose();
+      setTimeout(() => {
+        onClose();
+        setSuccessMessage(null);
+      }, 1500);
     } catch (err: any) {
-      setError(err.message || 'Failed to create or assign operator.');
+      setError(err.message || 'Failed to submit operator creation approval request.');
     } finally {
       setIsSubmitting(false);
     }
@@ -81,8 +97,8 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
     <Drawer
       open={isOpen}
       onClose={onClose}
-      title="Add Platform Operator"
-      subtitle="Grant platform access with the Operator role."
+      title="Request Platform Operator"
+      subtitle="Submit an approval request to provision or assign the Operator role."
       width="w-[420px]"
     >
       <form onSubmit={handleSubmit} className="space-y-4">
@@ -92,6 +108,16 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
             className="rounded-md border border-ops-border bg-ops-status-critical-bg p-3 text-xs text-ops-status-critical-text"
           >
             {error}
+          </div>
+        )}
+
+        {successMessage && (
+          <div
+            role="status"
+            className="flex items-center gap-2 rounded-md border border-ops-border bg-ops-status-positive-bg p-3 text-xs text-ops-status-positive-text"
+          >
+            <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>{successMessage}</span>
           </div>
         )}
 
@@ -123,6 +149,7 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
           <>
             <FormField id="add-operator-name" label="Full Name / Display Name" required>
               <input
+                id="add-operator-name"
                 type="text"
                 required
                 value={displayName}
@@ -134,6 +161,7 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
 
             <FormField id="add-operator-email" label="Email Address" required>
               <input
+                id="add-operator-email"
                 type="email"
                 required
                 value={email}
@@ -143,38 +171,10 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
               />
             </FormField>
 
-            <FormField id="add-operator-password" label="Initial Password" required>
-              <div className="relative">
-                <input
-                  id="add-operator-password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimum 8 characters"
-                  className={`${opsInputClass} pr-9`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  aria-label="Toggle password visibility"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-ops-text-secondary hover:text-ops-text-primary"
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Eye className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </FormField>
-
             <div className="flex items-start gap-2 rounded-md border border-ops-border bg-ops-canvas p-3">
               <Info className="mt-0.5 h-4 w-4 shrink-0 text-ops-text-secondary" aria-hidden="true" />
               <p className="text-xs leading-5 text-ops-text-secondary">
-                This account will be provisioned with standard operator permissions across
-                designated restaurant nodes.
+                Upon approval, a secure temporary password will be generated automatically and delivered to the local credentials artifact. No plaintext passwords are sent or stored.
               </p>
             </div>
           </>
@@ -186,6 +186,7 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
             hint="Assigns Platform Operator role to an active user without altering their account credentials."
           >
             <input
+              id="add-operator-user-id"
               type="text"
               required
               value={userId}
@@ -196,6 +197,17 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
           </FormField>
         )}
 
+        <FormField id="add-operator-justification" label="Business Justification (Optional)">
+          <textarea
+            id="add-operator-justification"
+            rows={2}
+            value={justification}
+            onChange={(e) => setJustification(e.target.value)}
+            placeholder="e.g. Needs access to manage live orders and table maps."
+            className={opsInputClass}
+          />
+        </FormField>
+
         <div className="flex items-center justify-end gap-2 border-t border-ops-border pt-4">
           <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
@@ -204,10 +216,10 @@ export const AddOperatorModal: React.FC<AddOperatorModalProps> = ({
             {isSubmitting ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                <span>Creating...</span>
+                <span>Submitting...</span>
               </>
             ) : (
-              <span>Confirm &amp; Add Operator</span>
+              <span>Submit for Approval</span>
             )}
           </Button>
         </div>

@@ -47,12 +47,6 @@ export const KDSTicketCard: React.FC<KDSTicketCardProps> = ({
       targetStatus: 'served',
       style: 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/20',
     };
-  } else if (order.status === 'served') {
-    nextAction = {
-      label: 'Complete Order',
-      targetStatus: 'completed',
-      style: 'bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600',
-    };
   }
 
   const handleActionClick = async () => {
@@ -87,6 +81,15 @@ export const KDSTicketCard: React.FC<KDSTicketCardProps> = ({
               }`}
             >
               {order.order_type || 'Dine-In'}
+            </span>
+            <span
+              className={`px-2 py-0.5 text-[10px] font-extrabold tracking-wider uppercase rounded-md border ${
+                order.payment_status === 'paid'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}
+            >
+              {order.payment_status === 'paid' ? `Paid (${order.payment_method?.toUpperCase() || 'PAID'})` : 'Unpaid'}
             </span>
           </div>
 
@@ -186,7 +189,9 @@ export const KDSTicketCard: React.FC<KDSTicketCardProps> = ({
               )}
             </button>
           ) : (
-            <span className="text-xs text-slate-500 italic">No further actions</span>
+            <span className="text-xs text-slate-400 font-semibold">
+              {order.status === 'served' ? 'Ready for Table • Settle in POS' : 'No further actions'}
+            </span>
           )}
         </div>
       </div>

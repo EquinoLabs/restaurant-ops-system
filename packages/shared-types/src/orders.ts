@@ -34,6 +34,14 @@ export interface OrderItem {
   special_instructions: string | null;
 }
 
+export type PaymentStatus = 'unpaid' | 'paid';
+export type PaymentMethod = 'cash' | 'upi';
+
+export interface OrderSettlementPayload {
+  payment_method: PaymentMethod;
+  confirm?: boolean;
+}
+
 export interface Order {
   id: string;
   outlet_id: string;
@@ -46,6 +54,11 @@ export interface Order {
   order_type: string;
   total_amount: number | string;
   notes: string | null;
+  payment_status: PaymentStatus;
+  payment_method: PaymentMethod | null;
+  settled_at: string | null;
+  settled_by_user_id: string | null;
+  settled_by_name: string | null;
   items: OrderItem[];
   created_at: string;
   updated_at: string;

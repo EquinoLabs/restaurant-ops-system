@@ -11,8 +11,10 @@ from app.modules.orders.models import Order, OrderItem, OrderIdempotencyKey
 from app.modules.tables.models import DiningTable
 from app.modules.menus.models import MenuItem
 from app.modules.outlets.models import Outlet
+from app.modules.staff.models import User
+from app.modules.audit.service import log_audit
 from app.modules.orders.schemas import OrderCreate, OrderOut, OrderItemOut, PublicOrderCreate
-from app.core.errors import NotFoundError, NotFoundException, ValidationError, BusinessRuleException, APIException
+from app.core.errors import NotFoundError, NotFoundException, ValidationError, BusinessRuleException, APIException, ConflictError
 
 
 
@@ -168,6 +170,14 @@ def update_order_status(
         raise ValidationError(f"Invalid status '{new_status}'. Allowed: {', '.join(valid_statuses)}")
 
     order = get_order_by_id(db, order_id=order_id)
+
+    # Prevent completion if order is unpaid
+    if new_status == "completed" and (order.payment_status or "unpaid") != "paid":
+        raise ValidationError(
+            f"Cannot complete order '{order.order_number}' because payment is unpaid. "
+            "Order bill must be settled before completion."
+        )
+
     order.status = new_status
 
     # Free up table status when order is completed or cancelled
@@ -189,6 +199,88 @@ def update_order_status(
     return order
 
 
+def settle_order(
+    db: Session,
+    order_id: uuid.UUID,
+    settling_user: User,
+    payment_method: str,
+    confirm: bool = True
+) -> Order:
+    """Explicitly settle an order's bill with cash or UPI.
+
+    Enforces:
+    - Explicit confirmation required (confirm=True).
+    - Supported payment methods: 'cash', 'upi'.
+    - Cancelled orders cannot be settled.
+    - Idempotent: repeated settlement with identical method succeeds without duplicate mutation.
+    - Conflicting re-settlement with different method raises ConflictError (HTTP 409).
+    - Immutable payment fields once settled.
+    - Records settling_user_id, settled_at, and durable audit log.
+    """
+    if not confirm:
+        raise ValidationError("Payment settlement must be explicitly confirmed.")
+
+    clean_method = (payment_method or "").strip().lower()
+    allowed_methods = {"cash", "upi"}
+    if clean_method not in allowed_methods:
+        raise ValidationError(
+            f"Invalid payment method '{payment_method}'. Allowed payment methods are: {', '.join(sorted(allowed_methods))}."
+        )
+
+    order = (
+        db.query(Order)
+        .filter(Order.id == order_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
+    if not order:
+        raise NotFoundError(f"Order with ID '{order_id}' not found")
+
+    if order.status == "cancelled":
+        raise ValidationError(f"Cannot settle cancelled order '{order.order_number}'.")
+
+    if (order.payment_status or "unpaid") == "paid":
+        if order.payment_method == clean_method:
+            # Idempotent retry: return existing settled order
+            return order
+        raise ConflictError(
+            f"Order '{order.order_number}' is already settled via {order.payment_method}. "
+            f"Cannot re-settle using {clean_method}."
+        )
+
+    now_utc = datetime.now(timezone.utc)
+    order.payment_status = "paid"
+    order.payment_method = clean_method
+    order.settled_at = now_utc
+    order.settled_by_user_id = settling_user.id
+
+    # Emit durable audit log
+    business_id = None
+    if order.outlet and order.outlet.business_id:
+        business_id = order.outlet.business_id
+
+    log_audit(
+        db=db,
+        business_id=business_id,
+        outlet_id=order.outlet_id,
+        actor_user_id=settling_user.id,
+        action="order.settle",
+        entity_type="order",
+        entity_id=order.id,
+        metadata_json={
+            "order_number": order.order_number,
+            "total_amount": str(order.total_amount),
+            "payment_method": clean_method,
+            "settled_at": now_utc.isoformat(),
+        }
+    )
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def serialize_order(order: Order) -> OrderOut:
     return OrderOut(
         id=order.id,
@@ -202,6 +294,11 @@ def serialize_order(order: Order) -> OrderOut:
         order_type=order.order_type,
         total_amount=order.total_amount,
         notes=order.notes,
+        payment_status=order.payment_status or "unpaid",
+        payment_method=order.payment_method,
+        settled_at=order.settled_at,
+        settled_by_user_id=order.settled_by_user_id,
+        settled_by_name=order.settled_by.display_name if order.settled_by else None,
         items=[
             OrderItemOut(
                 id=item.id,

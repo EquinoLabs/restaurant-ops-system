@@ -73,6 +73,15 @@ class ValidationError(APIException):
         )
 
 
+class ConflictError(APIException):
+    def __init__(self, message: str = "Resource conflict", code: str = "CONFLICT"):
+        super().__init__(
+            status_code=status.HTTP_409_CONFLICT,
+            code=code,
+            message=message
+        )
+
+
 class InternalServerError(APIException):
     def __init__(self, message: str = "Internal server error", code: str = "INTERNAL_SERVER_ERROR"):
         super().__init__(

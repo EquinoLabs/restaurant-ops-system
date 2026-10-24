@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '@roms/api-client';
-import { DiningTable, Order, OrderPayload, OrderStatus } from '@roms/shared-types';
+import { DiningTable, Order, OrderPayload, OrderStatus, PaymentMethod } from '@roms/shared-types';
 import { AdminMenuCategory } from '@roms/shared-types';
 import {
   fetchOutletTables,
@@ -9,6 +9,7 @@ import {
   fetchAdminMenu,
   createOrder,
   updateOrderStatus,
+  settleOrder,
 } from '@roms/api-client';
 import { TableSelectorGrid } from './TableSelectorGrid';
 import { OrderEntryPanel } from './OrderEntryPanel';
@@ -67,6 +68,18 @@ export const StaffOrdersView: React.FC = () => {
     if (!token) return;
     await updateOrderStatus(orderId, status, token);
     await loadData();
+  };
+
+  const handleSettleOrder = async (orderId: string, method: PaymentMethod) => {
+    if (!token) return;
+    setError(null);
+    try {
+      await settleOrder(orderId, { payment_method: method, confirm: true }, token);
+      await loadData();
+    } catch (err: any) {
+      setError(err.message || 'Failed to settle order bill.');
+      throw err;
+    }
   };
 
   const handleSignOut = () => {
@@ -226,6 +239,7 @@ export const StaffOrdersView: React.FC = () => {
             <ActiveOrdersQueue
               orders={orders}
               onUpdateStatus={handleUpdateStatus}
+              onSettleOrder={handleSettleOrder}
               loading={loading}
             />
           )}

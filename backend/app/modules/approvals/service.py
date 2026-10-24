@@ -85,6 +85,74 @@ def create_approval_request(
         if existing:
             return existing
 
+    # Duplicate pending request prevention for operator creation
+    if request_type == "operator_creation":
+        target_uid = sanitized_payload.get("target_user_id") or sanitized_payload.get("user_id")
+        target_email = sanitized_payload.get("email")
+
+        # 1. Mode 1: target existing user
+        if target_uid:
+            try:
+                target_uuid = uuid.UUID(str(target_uid))
+                target_user = db.query(User).filter(User.id == target_uuid).first()
+                if not target_user:
+                    raise NotFoundError(f"Target user '{target_uid}' not found.")
+                if target_user.platform_role == "operator":
+                    raise ValidationError(f"User '{target_user.email}' is already a Platform Operator.")
+                if target_user.is_platform_admin or target_user.platform_role in ("owner", "admin"):
+                    raise ValidationError(f"User '{target_user.email}' is an Administrator or Owner and cannot be demoted via operator_creation.")
+            except (ValueError, TypeError):
+                raise ValidationError("Invalid target_user_id UUID.")
+
+            # Check for existing active pending request for this user ID
+            pending_reqs = (
+                db.query(ApprovalRequest)
+                .filter(
+                    ApprovalRequest.request_type == "operator_creation",
+                    ApprovalRequest.status.in_([ApprovalStatus.PENDING, ApprovalStatus.NEEDS_INFORMATION]),
+                )
+                .all()
+            )
+            for pr in pending_reqs:
+                p_payload = pr.payload_snapshot or {}
+                p_uid = p_payload.get("target_user_id") or p_payload.get("user_id")
+                if p_uid and str(p_uid) == str(target_uid):
+                    raise ValidationError(
+                        f"An active approval request for user ID '{target_uid}' is already pending (Request ID: {pr.id})."
+                    )
+
+        # 2. Mode 2: provision new user by email
+        elif target_email:
+            clean_email = target_email.strip().lower()
+            if not clean_email or "@" not in clean_email:
+                raise ValidationError("A valid email address is required for operator creation.")
+
+            # Check if user already exists in users table
+            existing_user = db.query(User).filter(User.email == clean_email).first()
+            if existing_user:
+                raise ValidationError(
+                    f"A user with email '{clean_email}' already exists. Use target_user_id to assign operator role."
+                )
+
+            # Check for existing active pending request for this email
+            pending_reqs = (
+                db.query(ApprovalRequest)
+                .filter(
+                    ApprovalRequest.request_type == "operator_creation",
+                    ApprovalRequest.status.in_([ApprovalStatus.PENDING, ApprovalStatus.NEEDS_INFORMATION]),
+                )
+                .all()
+            )
+            for pr in pending_reqs:
+                p_payload = pr.payload_snapshot or {}
+                p_email = p_payload.get("email")
+                if p_email and p_email.strip().lower() == clean_email:
+                    raise ValidationError(
+                        f"An active approval request for email '{clean_email}' is already pending (Request ID: {pr.id})."
+                    )
+        else:
+            raise ValidationError("Either 'target_user_id' or 'email' must be provided for operator_creation.")
+
     req = ApprovalRequest(
         business_id=business_id,
         outlet_id=outlet_id,
@@ -511,4 +579,67 @@ def get_approval_request(
         raise NotFoundError("Approval request not found.")
 
     return req
+
+
+def retry_approval_execution(
+    db: Session,
+    request_id: uuid.UUID,
+    caller: User,
+) -> ApprovalRequest:
+    """
+    Retries execution of an already approved request that previously failed.
+    - Caller must be an authorized Platform Admin or Owner eligible to approve this request.
+    - Status must be 'approved' and execution_status must be 'failed'.
+    - Does NOT re-approve or alter the approval decision.
+    - Calls execute_approval_request to re-attempt domain operation.
+    - Logs audit record 'approval.request.retry'.
+    """
+    req = _lock_approval_request(db, request_id)
+    if not req:
+        raise NotFoundError("Approval request not found.")
+
+    # Caller must have admin or owner privileges
+    role = get_effective_platform_role(caller)
+    if not role or role not in ("owner", "admin"):
+        raise ForbiddenError("Only Platform Administrators or Platform Owner can retry request execution.")
+
+    # Check caller eligibility for this request
+    check_approver_eligibility(db, caller, req)
+
+    # Must be approved
+    if req.status != ApprovalStatus.APPROVED:
+        raise ValidationError(
+            f"Cannot retry execution: request status is '{req.status}'. Only '{ApprovalStatus.APPROVED}' requests can be retried."
+        )
+
+    # Execution status must be 'failed'
+    if req.execution_status != ExecutionStatus.FAILED:
+        raise ValidationError(
+            f"Cannot retry execution: execution status is '{req.execution_status}'. Only '{ExecutionStatus.FAILED}' executions can be retried."
+        )
+
+    # Audit retry attempt
+    log_audit(
+        db=db,
+        business_id=req.business_id,
+        outlet_id=req.outlet_id,
+        actor_user_id=caller.id,
+        action="approval.request.retry",
+        entity_type="approval_request",
+        entity_id=req.id,
+        metadata_json={
+            "outcome": "attempted",
+            "request_type": req.request_type,
+            "retry_count": req.retry_count,
+        },
+    )
+    db.commit()
+
+    # Re-execute via centralized execution engine
+    return execute_approval_request(
+        db=db,
+        request_id=req.id,
+        actor_user_id=caller.id,
+    )
+
 

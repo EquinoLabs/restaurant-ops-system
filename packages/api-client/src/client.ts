@@ -13,6 +13,7 @@ import {
   Order,
   OrderPayload,
   OrderStatus,
+  OrderSettlementPayload,
   PublicOrderPayload,
   PlatformBusiness,
   PlatformOutlet,
@@ -39,6 +40,7 @@ import {
   PlatformApprovalRequestsResponse,
   PlatformApprovalListParams,
   PlatformApprovalDecisionPayload,
+  PlatformApprovalSubmissionPayload,
 } from '@roms/shared-types';
 
 
@@ -475,6 +477,30 @@ export async function updateOrderStatus(
 
   if (!response.ok) {
     throw new Error(`Failed to update order status (${response.status})`);
+  }
+
+  return response.json();
+}
+
+export async function settleOrder(
+  orderId: string,
+  payload: OrderSettlementPayload,
+  token: string
+): Promise<Order> {
+  const response = await fetch(`${API_BASE_URL}/orders/${orderId}/settle`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errData = await response.json().catch(() => null);
+    const message = errData?.detail?.error?.message || errData?.detail || `Failed to settle order (${response.status})`;
+    throw new Error(message);
   }
 
   return response.json();
@@ -1223,6 +1249,64 @@ export async function decidePlatformApprovalRequest(
     const error = new Error(message);
     (error as any).status = response.status;
     (error as any).code = code;
+    (error as any).details = errorData?.detail?.error?.details;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function submitPlatformApprovalRequest(
+  token: string,
+  payload: PlatformApprovalSubmissionPayload
+): Promise<PlatformApprovalRequestDetail> {
+  const response = await fetch(`${API_BASE_URL}/platform/approvals`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to submit approval request (${response.status})`;
+    const error = new Error(message);
+    (error as any).status = response.status;
+    (error as any).details = errorData?.detail?.error?.details;
+    throw error;
+  }
+
+  return response.json();
+}
+
+export async function retryPlatformApprovalExecution(
+  token: string,
+  requestId: string
+): Promise<PlatformApprovalRequestDetail> {
+  const response = await fetch(`${API_BASE_URL}/platform/approvals/${encodeURIComponent(requestId)}/retry`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to retry approval execution (${response.status})`;
+    const error = new Error(message);
+    (error as any).status = response.status;
     (error as any).details = errorData?.detail?.error?.details;
     throw error;
   }

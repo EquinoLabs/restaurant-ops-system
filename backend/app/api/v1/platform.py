@@ -477,16 +477,11 @@ def create_operator(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    try:
-        operator = platform_service.create_platform_operator(
-            db, data=data, actor_user_id=current_user.id
-        )
-        db.commit()
-        db.refresh(operator)
-        return PlatformAdminUserOut.model_validate(operator)
-    except Exception:
-        db.rollback()
-        raise
+    from app.core.errors import ForbiddenError
+    raise ForbiddenError(
+        "Direct operator provisioning is disabled. All operator creation must go through "
+        "the centralized approval workflow via POST /api/v1/platform/approvals."
+    )
 
 
 @governance_router.post("/operators/{user_id}/revoke", response_model=PlatformAdminUserOut)

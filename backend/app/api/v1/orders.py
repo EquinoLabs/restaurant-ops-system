@@ -12,7 +12,7 @@ from app.api.deps import (
     verify_subresource_outlet_access,
 )
 from app.modules.staff.models import User
-from app.modules.orders.schemas import OrderCreate, OrderOut, OrderStatusUpdate
+from app.modules.orders.schemas import OrderCreate, OrderOut, OrderStatusUpdate, OrderSettlementRequest
 from app.modules.orders import service as order_service
 from app.modules.orders.models import Order
 from app.core.errors import NotFoundError
@@ -20,7 +20,13 @@ from app.core.errors import NotFoundError
 router = APIRouter(tags=["orders"])
 
 
-def _verify_order_membership(db: Session, order_id: uuid.UUID, user: User) -> Order:
+def _verify_order_membership(
+    db: Session,
+    order_id: uuid.UUID,
+    user: User,
+    allowed_roles: Optional[List[str]] = None,
+    write: bool = False
+) -> Order:
     order = db.query(Order).filter(Order.id == order_id).first()
     if not order:
         raise NotFoundError(f"Order with ID '{order_id}' not found")
@@ -28,12 +34,14 @@ def _verify_order_membership(db: Session, order_id: uuid.UUID, user: User) -> Or
     # not-found response as a missing order (no cross-tenant existence oracle).
     if not has_outlet_relationship(db, order.outlet_id, user.id):
         raise NotFoundError(f"Order with ID '{order_id}' not found")
+    roles = allowed_roles if allowed_roles is not None else ["owner", "manager", "waiter", "kitchen"]
     verify_subresource_outlet_access(
         db,
         order.outlet_id,
         user,
-        allowed_roles=["owner", "manager", "waiter", "kitchen"],
-        feature_code="ordering.staff"
+        allowed_roles=roles,
+        feature_code="ordering.staff",
+        write=write
     )
     return order
 
@@ -87,8 +95,37 @@ def update_order_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    _verify_order_membership(db, order_id=order_id, user=current_user)
+    _verify_order_membership(db, order_id=order_id, user=current_user, write=True)
     order = order_service.update_order_status(
         db, order_id=order_id, new_status=request.status
+    )
+    return order_service.serialize_order(order)
+
+
+@router.post("/orders/{order_id}/settle", response_model=OrderOut)
+def settle_order(
+    order_id: uuid.UUID,
+    request: OrderSettlementRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Explicitly settle an order's bill with cash or UPI.
+
+    Restricted to authorized staff roles (owner, manager, waiter).
+    Kitchen role cannot settle bills.
+    """
+    _verify_order_membership(
+        db,
+        order_id=order_id,
+        user=current_user,
+        allowed_roles=["owner", "manager", "waiter"],
+        write=True
+    )
+    order = order_service.settle_order(
+        db,
+        order_id=order_id,
+        settling_user=current_user,
+        payment_method=request.payment_method,
+        confirm=request.confirm
     )
     return order_service.serialize_order(order)

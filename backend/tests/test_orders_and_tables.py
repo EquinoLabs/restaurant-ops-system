@@ -124,8 +124,8 @@ def test_order_status_transitions_and_table_release(client, db_session):
     )
     order_id = order_resp.json()["id"]
 
-    # Advance status: pending -> confirmed -> in_kitchen -> served -> completed
-    for next_status in ["confirmed", "in_kitchen", "served", "completed"]:
+    # Advance status: pending -> confirmed -> in_kitchen -> served
+    for next_status in ["confirmed", "in_kitchen", "served"]:
         status_resp = client.patch(
             f"/api/v1/orders/{order_id}/status",
             headers=headers,
@@ -133,6 +133,34 @@ def test_order_status_transitions_and_table_release(client, db_session):
         )
         assert status_resp.status_code == 200
         assert status_resp.json()["status"] == next_status
+
+    # Verify attempting to complete an unpaid order is blocked
+    unpaid_complete = client.patch(
+        f"/api/v1/orders/{order_id}/status",
+        headers=headers,
+        json={"status": "completed"}
+    )
+    assert unpaid_complete.status_code == 422
+    assert "unpaid" in unpaid_complete.json()["detail"]["error"]["message"].lower()
+
+    # Settle bill explicitly
+    settle_resp = client.post(
+        f"/api/v1/orders/{order_id}/settle",
+        headers=headers,
+        json={"payment_method": "cash", "confirm": True}
+    )
+    assert settle_resp.status_code == 200
+    assert settle_resp.json()["payment_status"] == "paid"
+    assert settle_resp.json()["payment_method"] == "cash"
+
+    # Now complete order successfully
+    comp_resp = client.patch(
+        f"/api/v1/orders/{order_id}/status",
+        headers=headers,
+        json={"status": "completed"}
+    )
+    assert comp_resp.status_code == 200
+    assert comp_resp.json()["status"] == "completed"
 
     # Verify table is automatically released back to available
     table_get = client.get(f"/api/v1/outlets/{outlet.id}/tables", headers=headers)

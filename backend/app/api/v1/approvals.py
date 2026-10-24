@@ -15,6 +15,8 @@ from app.modules.approvals.service import (
     list_approval_requests,
     get_approval_request,
     decide_approval_request,
+    create_approval_request,
+    retry_approval_execution,
 )
 from app.modules.approvals.schemas import (
     ApprovalRequestsListResponse,
@@ -22,6 +24,7 @@ from app.modules.approvals.schemas import (
     ApprovalRequestDetailOut,
     ApprovalClarificationItemOut,
     ApprovalDecisionRequest,
+    ApprovalSubmissionRequest,
 )
 
 router = APIRouter(prefix="/platform/approvals", tags=["platform-approvals"])
@@ -153,6 +156,35 @@ def get_approval_endpoint(
 
 
 @router.post(
+    "",
+    response_model=ApprovalRequestDetailOut,
+    status_code=201,
+    summary="Submit an approval request",
+    description="Submits a new approval request for asynchronous review and centralized execution.",
+)
+def create_approval_endpoint(
+    body: ApprovalSubmissionRequest,
+    current_user: User = Depends(RequirePlatformRole(["owner", "admin", "operator"])),
+    db: Session = Depends(get_db),
+) -> ApprovalRequestDetailOut:
+    try:
+        req = create_approval_request(
+            db=db,
+            requester=current_user,
+            request_type=body.request_type,
+            target_entity_type=body.target_entity_type,
+            target_entity_id=body.target_entity_id,
+            payload=body.payload,
+            justification=body.justification,
+            idempotency_key=body.idempotency_key,
+        )
+        return _serialize_request_detail(req)
+    except ValueError as ve:
+        from app.core.errors import ValidationError
+        raise ValidationError(str(ve))
+
+
+@router.post(
     "/{request_id}/decide",
     response_model=ApprovalRequestDetailOut,
     summary="Decide an approval request (approve or reject)",
@@ -173,4 +205,24 @@ def decide_approval_endpoint(
         auto_execute=True,
     )
     return _serialize_request_detail(decided_req)
+
+
+@router.post(
+    "/{request_id}/retry",
+    response_model=ApprovalRequestDetailOut,
+    summary="Retry a failed approval execution",
+    description="Retries domain execution for an approved request whose execution status is 'failed'. Does not alter approval decision or allow duplicate execution.",
+)
+def retry_approval_endpoint(
+    request_id: uuid.UUID = Path(..., description="UUID of the approval request to retry"),
+    current_user: User = Depends(RequirePlatformRole(["owner", "admin"])),
+    db: Session = Depends(get_db),
+) -> ApprovalRequestDetailOut:
+    retried_req = retry_approval_execution(
+        db=db,
+        request_id=request_id,
+        caller=current_user,
+    )
+    return _serialize_request_detail(retried_req)
+
 

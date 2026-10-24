@@ -546,3 +546,12 @@ def test_migration_0012_transaction_rollback_after_postcheck_failure(monkeypatch
     finally:
         conn.close()
         engine.dispose()
+
+
+def test_alembic_migration_0016_structure():
+    m0016 = load_migration_module("0016_order_settlement_and_payment_status.py")
+    assert m0016.revision == '0016_order_settlement_and_payment_status'
+    assert m0016.down_revision == '0015_approval_workflow_schema'
+    assert callable(m0016.upgrade)
+    assert callable(m0016.downgrade)
+

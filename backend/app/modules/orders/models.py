@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional, TYPE_CHECKING
-from sqlalchemy import String, Integer, Numeric, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import String, Integer, Numeric, Text, ForeignKey, UniqueConstraint, DateTime
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,9 +45,20 @@ class Order(Base, TimestampMixin):
     total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"), nullable=False)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    payment_status: Mapped[str] = mapped_column(String(30), default="unpaid", server_default="unpaid", nullable=False, index=True)  # unpaid, paid
+    payment_method: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)  # cash, upi
+    settled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    settled_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
     outlet: Mapped["Outlet"] = relationship("Outlet")
     table: Mapped[Optional["DiningTable"]] = relationship("DiningTable")
-    waiter: Mapped[Optional["User"]] = relationship("User")
+    waiter: Mapped[Optional["User"]] = relationship("User", foreign_keys=[waiter_user_id])
+    settled_by: Mapped[Optional["User"]] = relationship("User", foreign_keys=[settled_by_user_id])
     items: Mapped[List["OrderItem"]] = relationship(
         "OrderItem",
         back_populates="order",

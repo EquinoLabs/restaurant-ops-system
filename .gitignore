@@ -26,6 +26,8 @@ htmlcov/
 *.pem
 *.key
 *.cert
+.local-user-credentials.txt
+backend/.local-user-credentials.txt
 
 # --- Node.js & Frontend ---
 node_modules/
@@ -66,4 +68,6 @@ Thumbs.db
 \#private/
 \#private
 *.log
+backend/scratch/
+fix_manager.py
 

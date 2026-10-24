@@ -337,3 +337,12 @@ export interface PlatformApprovalDecisionPayload {
   decision: 'approve' | 'reject';
   reason: string;
 }
+
+export interface PlatformApprovalSubmissionPayload {
+  request_type: string;
+  target_entity_type: string;
+  target_entity_id?: string | null;
+  payload: Record<string, any>;
+  justification?: string | null;
+  idempotency_key?: string | null;
+}

@@ -107,3 +107,20 @@ class ApprovalDecisionRequest(BaseModel):
         return instance
 
 
+class ApprovalSubmissionRequest(BaseModel):
+    """
+    Payload for submitting a new approval request.
+    Validates request_type, target_entity_type, payload snapshot, justification,
+    and optional idempotency_key. Disallows unknown fields.
+    """
+    request_type: str = Field(..., min_length=1, max_length=100, description="Type of operation, e.g. operator_creation")
+    target_entity_type: str = Field(..., min_length=1, max_length=100, description="Target entity type, e.g. user, operator")
+    target_entity_id: Optional[uuid.UUID] = Field(None, description="Optional target entity ID if modifying existing entity")
+    payload: Dict[str, Any] = Field(default_factory=dict, description="Operation payload to be sanitized and snapshotted")
+    justification: Optional[str] = Field(None, max_length=1000, description="Optional business justification for the request")
+    idempotency_key: Optional[str] = Field(None, max_length=255, description="Client idempotency key to prevent duplicate submissions")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+
