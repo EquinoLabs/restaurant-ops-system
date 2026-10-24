@@ -14,6 +14,7 @@ from app.modules.subscriptions.models import OutletSubscription  # noqa
 from app.modules.audit.models import AuditLog # noqa
 from app.modules.tables.models import DiningTable # noqa
 from app.modules.orders.models import Order, OrderItem # noqa
+from app.modules.approvals.models import ApprovalRequest, ApprovalClarification # noqa
 
 config = context.config
 

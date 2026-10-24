@@ -12,6 +12,7 @@ import { PlansPage } from './features/platform-admin/PlansPage';
 import { SubscriptionsOverviewPage } from './features/platform-admin/SubscriptionsOverviewPage';
 import { AdminsPage } from './features/platform-admin/AdminsPage';
 import { AuditLogsPage } from './features/platform-admin/AuditLogsPage';
+import { ApprovalsPage } from './features/platform-admin/ApprovalsPage';
 import { NotFoundPage } from './components/errors/NotFoundPage';
 
 export const PlatformAdminApp: React.FC = () => {
@@ -29,6 +30,7 @@ export const PlatformAdminApp: React.FC = () => {
           <Route path="/subscriptions" element={<Navigate to="/platform/subscriptions" replace />} />
           <Route path="/admins" element={<Navigate to="/platform/admins" replace />} />
           <Route path="/team" element={<Navigate to="/platform/admins" replace />} />
+          <Route path="/approvals" element={<Navigate to="/platform/approvals" replace />} />
           <Route path="/audit-logs" element={<Navigate to="/platform/audit-logs" replace />} />
 
           <Route
@@ -48,6 +50,7 @@ export const PlatformAdminApp: React.FC = () => {
             <Route path="subscriptions" element={<SubscriptionsOverviewPage />} />
             <Route path="admins" element={<AdminsPage />} />
             <Route path="team" element={<Navigate to="/platform/admins" replace />} />
+            <Route path="approvals" element={<ApprovalsPage />} />
             <Route path="audit-logs" element={<AuditLogsPage />} />
           </Route>
 

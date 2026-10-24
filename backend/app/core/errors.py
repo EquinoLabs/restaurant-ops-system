@@ -91,3 +91,16 @@ class ServiceUnavailableError(APIException):
         )
 
 
+class CommitOutcomeUncertainError(ServiceUnavailableError):
+    def __init__(
+        self,
+        message: str = "Transaction commit outcome is uncertain due to a transport failure. Preserving state without speculation.",
+        code: str = "COMMIT_OUTCOME_UNCERTAIN",
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        super().__init__(message=message, code=code)
+        if details:
+            self.detail["error"]["details"] = details
+
+
+

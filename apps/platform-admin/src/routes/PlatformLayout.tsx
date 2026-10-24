@@ -7,6 +7,7 @@ function getTabFromPath(path: string): PlatformTab {
   if (path.startsWith('/platform/plans')) return 'plans';
   if (path.startsWith('/platform/subscriptions')) return 'subscriptions';
   if (path.startsWith('/platform/admins') || path.startsWith('/platform/team')) return 'admins';
+  if (path.startsWith('/platform/approvals')) return 'approvals';
   if (path.startsWith('/platform/audit-logs')) return 'audit-logs';
   return 'dashboard';
 }

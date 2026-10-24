@@ -26,6 +26,9 @@ from app.modules.staff.models import User
 from app.modules.audit.models import AuditLog
 from app.core.security import hash_password
 from app.core.errors import ForbiddenError
+from app.modules.approvals.models import ApprovalRequest, ApprovalStatus, ExecutionStatus
+from app.modules.approvals.execution import execute_approval_request
+from app.modules.approvals.service import create_approval_request, decide_approval_request
 from app.modules.businesses.platform_service import (
     ADMIN_PRIVILEGE_LOCK_KEY,
     _acquire_admin_serialization_lock,
@@ -594,3 +597,71 @@ def test_pg_statement_timeout_and_cleanup(pg_connection_pair):
         {"key": ADMIN_PRIVILEGE_LOCK_KEY}
     ).scalar()
     assert available is True
+
+
+def test_pg_concurrent_approval_execution_serialized(pg_engine, pg_user_tracker):
+    """
+    Scenario 11: Concurrent execution against PostgreSQL serializes correctly via SELECT ... FOR UPDATE.
+    Thread 1 executes and commits SUCCEEDED. Thread 2 unblocks, observes committed SUCCEEDED status,
+    and returns idempotently without repeating the domain mutation.
+    """
+    SessionMaker = sa.orm.sessionmaker(bind=pg_engine, autocommit=False, autoflush=False)
+    setup_session = SessionMaker()
+    try:
+        owner = _create_test_user(setup_session, "appr_owner", role="owner", is_admin=True)
+        setup_session.commit()
+        owner_id = owner.id
+        pg_user_tracker(owner_id)
+
+        req = create_approval_request(
+            db=setup_session,
+            requester=owner,
+            request_type="business_creation",
+            target_entity_type="business",
+            payload={"name": f"PG Conc Biz {uuid.uuid4().hex[:6]}", "owner_email": f"pg_owner_{uuid.uuid4().hex[:6]}@test.com", "owner_display_name": "PG Owner"},
+        )
+        decide_approval_request(
+            db=setup_session,
+            request_id=req.id,
+            approver=owner,
+            decision="approve",
+            reason="Approved for PG test",
+            auto_execute=False,
+        )
+        req_id = req.id
+    finally:
+        setup_session.close()
+
+    results = {}
+    barrier = threading.Barrier(2)
+
+    def worker(worker_id):
+        sess = SessionMaker()
+        try:
+            barrier.wait(timeout=5)
+            res = execute_approval_request(db=sess, request_id=req_id, actor_user_id=owner_id)
+            results[worker_id] = res.execution_status
+        except Exception as e:
+            results[worker_id] = e
+        finally:
+            sess.close()
+
+    t1 = threading.Thread(target=worker, args=("t1",))
+    t2 = threading.Thread(target=worker, args=("t2",))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert results.get("t1") == ExecutionStatus.SUCCEEDED
+    assert results.get("t2") == ExecutionStatus.SUCCEEDED
+
+    verify_session = SessionMaker()
+    try:
+        final_req = verify_session.query(ApprovalRequest).filter(ApprovalRequest.id == req_id).first()
+        assert final_req.execution_status == ExecutionStatus.SUCCEEDED
+        # Executed exactly once
+        assert final_req.retry_count == 1
+    finally:
+        verify_session.close()
+

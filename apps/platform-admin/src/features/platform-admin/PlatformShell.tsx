@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@roms/api-client';
 import {
   Building2,
+  CheckSquare,
   CreditCard,
   FileText,
   LayoutDashboard,
@@ -15,7 +16,7 @@ import {
 } from 'lucide-react';
 import { RoleBadge } from '../../components/ops-ui';
 
-export type PlatformTab = 'dashboard' | 'businesses' | 'plans' | 'subscriptions' | 'admins' | 'audit-logs';
+export type PlatformTab = 'dashboard' | 'businesses' | 'plans' | 'subscriptions' | 'admins' | 'approvals' | 'audit-logs';
 
 interface PlatformShellProps {
   activeTab: PlatformTab;
@@ -54,6 +55,7 @@ const navGroups: NavGroup[] = [
     label: 'Platform',
     items: [
       { id: 'admins', label: 'Team', icon: Users },
+      { id: 'approvals', label: 'Approvals', icon: CheckSquare },
       { id: 'audit-logs', label: 'Audit Logs', icon: ScrollText },
     ],
   },

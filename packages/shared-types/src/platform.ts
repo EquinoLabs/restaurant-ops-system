@@ -259,6 +259,81 @@ export interface PlatformOverrideRevokePayload {
   reason: string;
 }
 
+export type PlatformApprovalStatus =
+  | 'pending'
+  | 'needs_information'
+  | 'approved'
+  | 'rejected'
+  | 'withdrawn'
+  | 'expired';
 
+export type PlatformExecutionStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'succeeded'
+  | 'failed'
+  | 'blocked';
 
+export interface PlatformApprovalClarificationItem {
+  id: string;
+  approval_request_id: string;
+  author_user_id: string;
+  author_email: string | null;
+  author_display_name: string | null;
+  clarification_type: string;
+  message: string;
+  created_at: string;
+}
 
+export interface PlatformApprovalRequestItem {
+  id: string;
+  business_id: string | null;
+  outlet_id: string | null;
+  requester_user_id: string;
+  requester_email: string | null;
+  requester_display_name: string | null;
+  approver_user_id: string | null;
+  approver_email: string | null;
+  approver_display_name: string | null;
+  request_type: string;
+  target_entity_type: string;
+  target_entity_id: string | null;
+  status: PlatformApprovalStatus | string;
+  execution_status: PlatformExecutionStatus | string;
+  justification: string | null;
+  expires_at: string | null;
+  decided_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlatformApprovalRequestDetail extends PlatformApprovalRequestItem {
+  payload_snapshot: Record<string, any>;
+  decision_reason: string | null;
+  execution_started_at: string | null;
+  execution_completed_at: string | null;
+  execution_error: string | null;
+  execution_details_json: Record<string, any> | null;
+  parent_request_id: string | null;
+  clarifications: PlatformApprovalClarificationItem[];
+}
+
+export interface PlatformApprovalRequestsResponse {
+  items: PlatformApprovalRequestItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface PlatformApprovalListParams {
+  status?: string;
+  request_type?: string;
+  business_id?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface PlatformApprovalDecisionPayload {
+  decision: 'approve' | 'reject';
+  reason: string;
+}

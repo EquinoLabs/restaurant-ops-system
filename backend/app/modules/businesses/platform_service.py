@@ -123,7 +123,10 @@ def list_platform_businesses(db: Session) -> List[Business]:
 
 
 def create_platform_business(
-    db: Session, data: PlatformBusinessCreate, actor_user_id: Optional[uuid.UUID] = None
+    db: Session,
+    data: PlatformBusinessCreate,
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> Business:
     """
     Provisions a new Business and links its mandatory owner in a single transaction.
@@ -200,17 +203,26 @@ def create_platform_business(
                 "created_new_user": created_new_user,
             },
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
-    db.refresh(business)
+    if commit:
+        db.refresh(business)
     return business
 
 
 def update_business_subscription(
-    db: Session, business_id: uuid.UUID, data: PlatformSubscriptionUpdate, actor_user_id: Optional[uuid.UUID] = None
+    db: Session,
+    business_id: uuid.UUID,
+    data: PlatformSubscriptionUpdate,
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> Business:
     """
     Updates subscription lifecycle, plan, account status, max outlets, and audit history.
@@ -654,17 +666,26 @@ def update_business_subscription(
                 **audit_metadata
             }
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
-    db.refresh(business)
+    if commit:
+        db.refresh(business)
     return business
 
 
 def add_outlet_to_business(
-    db: Session, business_id: uuid.UUID, data: PlatformOutletCreate, actor_user_id: Optional[uuid.UUID] = None
+    db: Session,
+    business_id: uuid.UUID,
+    data: PlatformOutletCreate,
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> Outlet:
     """
     Adds a new Outlet to an existing Business, enforcing central EntitlementService authorization and capacity limits.
@@ -812,13 +833,20 @@ def add_outlet_to_business(
         }
     )
 
-    db.commit()
-    db.refresh(outlet)
+    if commit:
+        db.commit()
+        db.refresh(outlet)
+    else:
+        db.flush()
     return outlet
 
 
 def assign_owner_to_business(
-    db: Session, business_id: uuid.UUID, data: PlatformAssignOwner, actor_user_id: Optional[uuid.UUID] = None
+    db: Session,
+    business_id: uuid.UUID,
+    data: PlatformAssignOwner,
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> BusinessMembership:
     """
     Creates or assigns a User as an 'owner' for a Business (not tied to any specific outlet).
@@ -904,8 +932,11 @@ def assign_owner_to_business(
         }
     )
 
-    db.commit()
-    db.refresh(biz_membership)
+    if commit:
+        db.commit()
+        db.refresh(biz_membership)
+    else:
+        db.flush()
     return biz_membership
 
 
@@ -931,7 +962,10 @@ def list_platform_admins(db: Session) -> List[User]:
 
 
 def grant_platform_admin(
-    db: Session, target_user_id: uuid.UUID, actor_user_id: Optional[uuid.UUID] = None
+    db: Session,
+    target_user_id: uuid.UUID,
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> User:
     """
     Grants platform administrator privileges to an existing user.
@@ -972,13 +1006,19 @@ def grant_platform_admin(
         }
     )
 
-    db.commit()
-    db.refresh(user)
+    if commit:
+        db.commit()
+        db.refresh(user)
+    else:
+        db.flush()
     return user
 
 
 def revoke_platform_admin(
-    db: Session, target_user_id: uuid.UUID, actor_user_id: uuid.UUID
+    db: Session,
+    target_user_id: uuid.UUID,
+    actor_user_id: uuid.UUID,
+    commit: bool = True,
 ) -> User:
     """
     Revokes platform administrator privileges from a user, with concurrency-safe last-admin protection.
@@ -1030,8 +1070,11 @@ def revoke_platform_admin(
         }
     )
 
-    db.commit()
-    db.refresh(user)
+    if commit:
+        db.commit()
+        db.refresh(user)
+    else:
+        db.flush()
     return user
 
 
@@ -1153,8 +1196,8 @@ def create_platform_operator(
     if actor.status != "active":
         raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can provision operators.")
 
-    if actor.platform_role != "owner" or not actor.is_platform_admin:
-        raise ForbiddenError("Platform Owner privileges are required to provision operators.")
+    if not actor.is_platform_admin or actor.platform_role not in ("owner", "admin"):
+        raise ForbiddenError("Platform Administrator or Owner privileges are required to provision operators.")
 
     # 3. Branching: Mode 1 (Existing User) vs Mode 2 (New User)
     if data.user_id is not None:
@@ -1272,8 +1315,8 @@ def revoke_platform_operator(
     if actor.status != "active":
         raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can revoke operators.")
 
-    if actor.platform_role != "owner" or not actor.is_platform_admin:
-        raise ForbiddenError("Platform Owner privileges are required to revoke operators.")
+    if not actor.is_platform_admin or actor.platform_role not in ("owner", "admin"):
+        raise ForbiddenError("Platform Administrator or Owner privileges are required to revoke operators.")
 
     # 3. Reload target user with populate_existing()
     target = db.query(User).populate_existing().filter(User.id == target_user_id).first()
@@ -1357,8 +1400,8 @@ def suspend_platform_user(
     if actor.status != "active":
         raise ForbiddenError(f"Actor account has status '{actor.status}'. Only active accounts can suspend users.")
 
-    if actor.platform_role != "owner" or not actor.is_platform_admin:
-        raise ForbiddenError("Platform Owner privileges are required to suspend users.")
+    if not actor.is_platform_admin or actor.platform_role not in ("owner", "admin"):
+        raise ForbiddenError("Platform Administrator or Owner privileges are required to suspend users.")
 
     # 3. Self-suspension prevention
     if target_user_id == actor.id:
@@ -1372,6 +1415,9 @@ def suspend_platform_user(
     # 5. Owner protection check
     if target.platform_role == "owner":
         raise ValidationError("Platform Owner cannot be suspended.")
+
+    if (target.is_platform_admin or target.platform_role in ("admin", "owner")) and actor.platform_role != "owner":
+        raise ForbiddenError("Only the Platform Owner can suspend another Platform Administrator.")
 
     # 6. Idempotency check: if already suspended, return target without mutation or audit log
     if target.status == "suspended":
@@ -1499,7 +1545,8 @@ def update_business_profile(
     db: Session,
     business_id: uuid.UUID,
     data: PlatformBusinessProfileUpdate,
-    actor_user_id: Optional[uuid.UUID] = None
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> Business:
     """
     Updates business general metadata (display/legal name).
@@ -1580,12 +1627,17 @@ def update_business_profile(
                     }
                 )
 
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
-    db.refresh(business)
+    if commit:
+        db.refresh(business)
     return business
 
 
@@ -1608,7 +1660,8 @@ def update_outlet_profile(
     db: Session,
     outlet_id: uuid.UUID,
     data: PlatformOutletProfileUpdate,
-    actor_user_id: Optional[uuid.UUID] = None
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> Outlet:
     """
     Updates outlet profile metadata and branding colors.
@@ -1707,12 +1760,17 @@ def update_outlet_profile(
                 "after": after_state,
             }
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
-    db.refresh(outlet)
+    if commit:
+        db.refresh(outlet)
     return outlet
 
 
@@ -1720,7 +1778,8 @@ def update_outlet_subscription(
     db: Session,
     outlet_id: uuid.UUID,
     data: PlatformOutletSubscriptionUpdate,
-    actor_user_id: Optional[uuid.UUID] = None
+    actor_user_id: Optional[uuid.UUID] = None,
+    commit: bool = True,
 ) -> OutletSubscription:
     """
     Updates outlet subscription lifecycle, plan, and audit history.
@@ -2127,10 +2186,15 @@ def update_outlet_subscription(
                 **audit_metadata
             }
         )
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
-        db.rollback()
+        if commit:
+            db.rollback()
         raise
 
-    db.refresh(final_sub)
+    if commit:
+        db.refresh(final_sub)
     return final_sub

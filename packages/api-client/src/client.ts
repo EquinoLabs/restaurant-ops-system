@@ -35,6 +35,10 @@ import {
   PlatformOperatorCreatePayload,
   PlatformOwnerTransferPayload,
   PlatformOutletDetail,
+  PlatformApprovalRequestDetail,
+  PlatformApprovalRequestsResponse,
+  PlatformApprovalListParams,
+  PlatformApprovalDecisionPayload,
 } from '@roms/shared-types';
 
 
@@ -1130,9 +1134,98 @@ export async function reactivatePlatformUser(userId: string, token: string): Pro
   return response.json();
 }
 
+// --- Platform Approvals API ---
 
+export async function fetchPlatformApprovals(
+  token: string,
+  params?: PlatformApprovalListParams
+): Promise<PlatformApprovalRequestsResponse> {
+  const query = new URLSearchParams();
+  if (params?.status) query.set('status', params.status);
+  if (params?.request_type) query.set('request_type', params.request_type);
+  if (params?.business_id) query.set('business_id', params.business_id);
+  if (params?.limit !== undefined) query.set('limit', String(params.limit));
+  if (params?.offset !== undefined) query.set('offset', String(params.offset));
 
+  const qs = query.toString();
+  const url = `${API_BASE_URL}/platform/approvals${qs ? `?${qs}` : ''}`;
 
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
 
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to load approvals (${response.status})`;
+    throw new Error(message);
+  }
 
+  return response.json();
+}
 
+export async function fetchPlatformApprovalDetail(
+  token: string,
+  requestId: string
+): Promise<PlatformApprovalRequestDetail> {
+  const response = await fetch(`${API_BASE_URL}/platform/approvals/${encodeURIComponent(requestId)}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error('Approval request not found.');
+    }
+    const errorData = await response.json().catch(() => ({}));
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to load approval request detail (${response.status})`;
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
+export async function decidePlatformApprovalRequest(
+  token: string,
+  requestId: string,
+  payload: PlatformApprovalDecisionPayload
+): Promise<PlatformApprovalRequestDetail> {
+  const response = await fetch(`${API_BASE_URL}/platform/approvals/${encodeURIComponent(requestId)}/decide`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const code = errorData?.detail?.error?.code || (response.status === 503 ? 'COMMIT_OUTCOME_UNCERTAIN' : undefined);
+    const message =
+      errorData?.detail?.error?.message ||
+      errorData?.detail?.message ||
+      (typeof errorData?.detail === 'string' ? errorData?.detail : null) ||
+      `Failed to submit decision (${response.status})`;
+    const error = new Error(message);
+    (error as any).status = response.status;
+    (error as any).code = code;
+    (error as any).details = errorData?.detail?.error?.details;
+    throw error;
+  }
+
+  return response.json();
+}
